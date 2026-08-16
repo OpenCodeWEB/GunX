@@ -67,6 +67,7 @@
       <h2 class="font-bold text-lg"><i class="fa-solid fa-tower-broadcast text-teal-400 mr-2"></i>Live P2P playground</h2>
       <div class="flex items-center gap-2 text-xs text-slate-400 mono">
         <span>room: gunx-playground/chat</span>
+        <span id="onlinePill" class="px-2 py-1 rounded bg-slate-800 text-slate-400" title="Peers online (same page open in another tab)">0 online</span>
         <button id="clearBtn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">clear</button>
       </div>
     </div>
@@ -74,11 +75,19 @@
       <div class="md:col-span-2 p-6">
         <div id="messages" class="h-72 overflow-y-auto space-y-2 pr-2"></div>
         <form id="msgForm" class="mt-4 flex gap-2">
+          <button type="button" id="imgBtn" title="Attach image — uploaded via the imgbb proxy, shared in chat"
+            class="w-11 bg-slate-800 border border-slate-700 rounded-lg text-teal-300 hover:bg-slate-700 shrink-0"><i class="fa-solid fa-image"></i></button>
+          <button type="button" id="fileBtn" title="Attach file — sent P2P to online peers (WebRTC), no relay storage"
+            class="w-11 bg-slate-800 border border-slate-700 rounded-lg text-cyan-300 hover:bg-slate-700 shrink-0"><i class="fa-solid fa-paperclip"></i></button>
           <input id="msgInput" type="text" autocomplete="off" placeholder="Type a message — it syncs to every open visitor in realtime…"
             class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/50">
           <button type="submit" class="bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-5 py-2.5 rounded-lg text-sm hover:opacity-90">Send</button>
+          <input id="imgInput" type="file" accept="image/*" hidden>
+          <input id="fileInput" type="file" hidden>
         </form>
-        <p class="mt-3 text-xs text-slate-500">Open this page in two tabs — messages appear in both in realtime through gunx.pages.dev.</p>
+        <p class="mt-3 text-xs text-slate-500">Open this page in two tabs — messages appear in both in realtime through gunx.pages.dev.
+          <span class="text-slate-400">Images host on imgbb.com via the server-side proxy (key never leaves the server);
+          other files transfer P2P between tabs over WebRTC (64KB chunks, signaling through GunX souls).</span></p>
       </div>
       <div class="border-t md:border-t-0 md:border-l border-slate-800 p-6 bg-slate-950/40">
         <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">How it works</h3>
@@ -97,59 +106,6 @@
             <div class="flex justify-between"><dt class="text-slate-500">backend</dt><dd id="stBackend">—</dd></div>
           </dl>
         </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- File drop (P2P via WebRTC) -->
-<section id="filedrop" class="max-w-6xl mx-auto px-4 py-10">
-  <div class="rounded-2xl border border-slate-800 bg-slate-900/60 glow overflow-hidden">
-    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
-      <h2 class="font-bold text-lg"><i class="fa-solid fa-file-arrow-up text-teal-400 mr-2"></i>File drop — P2P, no relay storage</h2>
-      <span class="text-xs text-slate-400 mono">WebRTC data channel · 64KB chunks · signaling via GunX souls</span>
-    </div>
-    <div class="grid md:grid-cols-2">
-      <div class="p-6 border-b md:border-b-0 md:border-r border-slate-800">
-        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Peers online</h3>
-        <div id="peerList" class="text-sm space-y-1.5 mb-4 min-h-[3rem]"></div>
-        <form id="fileForm" class="space-y-3">
-          <div>
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Send to</label>
-            <select id="targetSel" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/50">
-              <option value="*">All peers</option>
-            </select>
-          </div>
-          <div>
-            <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">Files</label>
-            <input id="fileInput" type="file" multiple
-              class="w-full text-sm text-slate-300 file:mr-3 file:rounded-lg file:border-0 file:bg-teal-500 file:text-slate-950 file:font-semibold file:px-4 file:py-2 file:cursor-pointer hover:file:opacity-90">
-          </div>
-          <div class="flex gap-2">
-            <button type="submit" class="flex-1 bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-4 py-2.5 rounded-lg text-sm hover:opacity-90">
-              <i class="fa-solid fa-paper-plane mr-1"></i> Send P2P
-            </button>
-            <button id="imgbbBtn" type="button" class="bg-slate-800 border border-slate-700 text-slate-200 font-semibold px-4 py-2.5 rounded-lg text-sm hover:bg-slate-700" title="Upload first selected file to imgbb (if key set)">
-              <i class="fa-solid fa-image mr-1"></i> imgbb
-            </button>
-          </div>
-        </form>
-        <div class="mt-5 pt-4 border-t border-slate-800">
-          <label class="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
-            Image hosting — imgbb via server-side proxy
-          </label>
-          <p class="text-xs text-slate-500">The <span class="mono text-teal-300">/api/imgbb</span> proxy keeps the imgbb
-            API key on the server (never exposed to browsers) and only accepts uploads from
-            <span class="mono">*.gunx.pages.dev</span> origins, with per-IP rate limiting — so the key cannot be
-            reused from other sites. Uploaded images appear in the chat below. SDK users can self-host their own
-            proxy or pass <span class="mono text-teal-300">GunX({ imgbbKey })</span> for direct uploads.</p>
-        </div>
-      </div>
-      <div class="p-6">
-        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Transfers</h3>
-        <div id="transfers" class="space-y-3"></div>
-        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 mt-6">Received</h3>
-        <div id="received" class="space-y-2"></div>
       </div>
     </div>
   </div>
@@ -238,7 +194,7 @@ gunx.put('todos', { hello: 'world' });</pre>
 <script>
 (function () {
   "use strict";
-  var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000 });
+  var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000, autoAccept: true });
   window.gunx = gunx; // debug/testing hook
   var msgs = document.getElementById("messages");
   var form = document.getElementById("msgForm");
@@ -316,144 +272,91 @@ gunx.put('todos', { hello: 'world' });</pre>
     }).catch(function () {});
   }, 5000);
 
-  /* ── File drop: presence + P2P WebRTC transfers ─────────────────── */
-  var tId = 0;
+  /* ── Chat attachments: presence + image (imgbb proxy) + files (P2P WebRTC) ─ */
   function esc(s) { return String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
-  function shortId(id) { return id ? id.slice(0, 8) : "?"; }
 
   gunx.joinPresence({ name: "visitor-" + Math.random().toString(36).slice(2, 6) });
-  var sel = document.getElementById("targetSel");
   gunx.onPeers(function (list) {
-    var el = document.getElementById("peerList");
-    if (!list.length) {
-      el.innerHTML = '<p class="text-slate-500 text-sm italic">No peers yet — open this page in a second tab to see it here.</p>';
-    } else {
-      el.innerHTML = list.map(function (p) {
-        return '<div class="flex items-center gap-2 text-slate-300"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>' +
-          '<span class="mono">' + esc(shortId(p.id)) + "</span><span class='text-slate-500 text-xs'>" + esc(p.name || "") + "</span></div>";
-      }).join("");
-    }
-    var cur = sel.value;
-    sel.innerHTML = '<option value="*">All peers (' + list.length + ")</option>" +
-      list.map(function (p) { return '<option value="' + esc(p.id) + '">' + esc(shortId(p.id)) + "</option>"; }).join("");
-    sel.value = cur;
+    document.getElementById("onlinePill").textContent = list.length + " online";
+    document.getElementById("onlinePill").title = list.map(function (p) { return p.name || p.id; }).join(", ");
   });
 
-  function transferCard(key, label, total) {
-    var div = document.createElement("div");
-    div.className = "rounded-lg border border-slate-700 bg-slate-800/60 p-3 text-sm";
-    div.innerHTML = '<div class="flex items-center justify-between gap-2"><span class="truncate">' + label + "</span>" +
-      '<span class="mono text-xs text-slate-400 shrink-0">0%</span></div>' +
-      '<div class="mt-2 h-1.5 rounded-full bg-slate-700 overflow-hidden"><div class="bar h-full w-0 bg-gradient-to-r from-teal-400 to-cyan-500 transition-all"></div></div>' +
-      '<div class="mt-1.5 text-xs text-slate-500 mono">' + esc(key) + "</div>";
-    document.getElementById("transfers").appendChild(div);
-    return {
-      el: div,
-      bar: div.querySelector(".bar"),
-      pct: div.querySelector(".mono.shrink-0"),
-      total: total,
-      set: function (done) {
-        var pct = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
-        this.bar.style.width = pct + "%";
-        this.pct.textContent = pct + "%";
-      }
-    };
+  var xferStatus = document.createElement("p");
+  xferStatus.id = "xferStatus";
+  xferStatus.className = "mt-2 text-xs text-teal-300 mono";
+  xferStatus.style.display = "none";
+  document.getElementById("msgForm").parentNode.appendChild(xferStatus);
+
+  function setXfer(text) {
+    xferStatus.textContent = text || "";
+    xferStatus.style.display = text ? "" : "none";
   }
 
-  gunx.onFileOffer(function (offer) {
-    var div = document.createElement("div");
-    div.className = "rounded-lg border border-teal-500/40 bg-teal-500/10 p-3 text-sm";
-    div.innerHTML = '<div class="flex items-center justify-between gap-2"><span>Incoming transfer from <span class="mono text-teal-300">' + esc(shortId(offer.from)) + "</span></span></div>" +
-      '<div class="mt-2 flex gap-2">' +
-      '<button class="acc flex-1 bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-3 py-1.5 rounded-lg text-xs">Accept</button>' +
-      '<button class="dec bg-slate-800 border border-slate-700 text-slate-300 px-3 py-1.5 rounded-lg text-xs">Decline</button></div>';
-    document.getElementById("transfers").prepend(div);
-    div.querySelector(".acc").addEventListener("click", function () {
-      div.remove();
-      offer.accept();
-    });
-    div.querySelector(".dec").addEventListener("click", function () {
-      div.remove();
-      offer.reject();
-    });
+  gunx.onTransferProgress(function (p) {
+    var dir = p.direction === "out" ? "sending" : "receiving";
+    var done = p.sent || p.received || 0;
+    var pct = p.total ? Math.min(100, Math.round((done / p.total) * 100)) : 0;
+    setXfer((dir === "sending" ? "↑" : "↓") + " " + (p.name || "file") + " " + pct + "% (" + fmt(done) + "B / " + fmt(p.total) + "B)");
   });
 
-  var recvCards = {};
-  gunx.onTransferProgress(function (p) {
-    var key = (p.direction === "out" ? "to:" : "from:") + (p.to || p.from);
-    var card = recvCards[key];
-    if (!card) {
-      card = recvCards[key] = transferCard(key, (p.direction === "out" ? "sending " : "receiving ") + (p.name || "file"), p.total);
-    }
-    card.set(p.sent || p.received || 0);
-  });
+  function chatMsg(t, img, file) {
+    var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    var node = { t: t, from: "local" };
+    if (img) node.img = img;
+    if (file) node.file = file;
+    gunx.put("chat/" + id, node);
+    addMsg(t, true, img, file);
+  }
 
   gunx.onFile(function (f) {
-    if (f.error) {
-      var d = document.createElement("div");
-      d.className = "rounded-lg border border-red-500/40 bg-red-500/10 p-3 text-sm text-red-300";
-      d.textContent = "transfer failed from " + shortId(f.from) + ": " + f.error.message;
-      document.getElementById("transfers").prepend(d);
-      return;
-    }
-    var key = "from:" + f.from;
-    if (recvCards[key]) { recvCards[key].el.remove(); delete recvCards[key]; }
-    // Chat integration: announce received P2P files in the chat room too.
-    gunx.put("chat/" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-      { t: "received file via P2P", from: "local", file: { name: f.name, size: f.size } });
-    addMsg("received file via P2P", true, null, { name: f.name, size: f.size });
+    if (f.error) { setXfer("P2P transfer failed: " + f.error.message); return; }
+    setXfer(""); // clear progress line
+    chatMsg("received file via P2P", null, { name: f.name, size: f.size });
+    // Download link lives only in this browser (P2P — bytes never touched the relay).
     var a = document.createElement("a");
     a.href = URL.createObjectURL(f.blob);
     a.download = f.name;
-    a.className = "flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-800/60 p-3 text-sm hover:border-teal-500/50 transition-colors";
-    var preview = (f.type || "").indexOf("image/") === 0
-      ? '<img src="' + a.href + '" class="w-10 h-10 rounded object-cover" alt="">'
-      : '<i class="fa-solid fa-file text-teal-400 text-lg w-10 text-center"></i>';
-    a.innerHTML = preview + '<span class="flex-1 min-w-0"><span class="block truncate">' + esc(f.name) + "</span>" +
-      '<span class="block text-xs text-slate-500 mono">' + fmt(f.size) + "B · from " + esc(shortId(f.from)) + "</span></span>" +
-      '<i class="fa-solid fa-download text-slate-500"></i>';
-    document.getElementById("received").prepend(a);
+    a.className = "mt-1 inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-teal-500/50 transition-colors";
+    a.innerHTML = '<i class="fa-solid fa-download text-teal-400"></i> Save ' + esc(f.name) +
+      ' <span class="text-slate-500 mono">(' + fmt(f.size) + "B)</span>";
+    document.getElementById("messages").appendChild(a);
   });
 
-  document.getElementById("fileForm").addEventListener("submit", function (e) {
-    e.preventDefault();
-    var files = document.getElementById("fileInput").files;
-    if (!files.length) return;
-    var to = sel.value === "*" ? null : sel.value;
-    for (var i = 0; i < files.length; i++) {
-      gunx.shareFile(files[i], to ? { to: to } : {}, function (err, res) {
-        if (err && err.message === "no peers available") {
-          var d = document.createElement("div");
-          d.className = "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300";
-          d.textContent = "No peers online — open this page in a second tab.";
-          document.getElementById("transfers").prepend(d);
-        }
-      });
-    }
-    e.target.reset();
+  /* Image → imgbb via server-side proxy → chat message */
+  document.getElementById("imgBtn").addEventListener("click", function () {
+    document.getElementById("imgInput").click();
   });
-
-  /* imgbb image upload via the server-side proxy (key never touches the browser) */
-  document.getElementById("imgbbBtn").addEventListener("click", function () {
-    var file = document.getElementById("fileInput").files[0];
-    if (!file) { alert("Choose an image file first."); return; }
-    if ((file.type || "").indexOf("image/") !== 0) { alert("imgbb hosts images only — use Send P2P for other files."); return; }
+  document.getElementById("imgInput").addEventListener("change", function () {
+    var file = this.files[0];
+    this.value = "";
+    if (!file) return;
+    setXfer("uploading " + file.name + " to imgbb…");
     gunx.uploadImage(file, { proxy: "/api/imgbb" }).then(function (data) {
-      var url = data.display_url || data.url;
-      // Chat integration: image messages are part of the room graph.
-      var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-      gunx.put("chat/" + id, { t: file.name, from: "local", img: url });
-      addMsg(file.name, true, url);
-      var d = document.createElement("div");
-      d.className = "rounded-lg border border-teal-500/40 bg-teal-500/10 p-3 text-sm";
-      d.innerHTML = 'imgbb uploaded: <a class="text-teal-300 underline break-all" href="' + esc(url) + '" target="_blank" rel="noopener">' + esc(url) + "</a>" +
-        '<div class="mt-2"><img src="' + esc(url) + '" class="max-h-40 rounded border border-slate-700" alt=""></div>';
-      document.getElementById("received").prepend(d);
+      setXfer("");
+      chatMsg(file.name, data.display_url || data.url);
     }).catch(function (err) {
-      var d = document.createElement("div");
-      d.className = "rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-300";
-      d.textContent = "imgbb upload failed: " + err.message + " — try Send P2P instead.";
-      document.getElementById("transfers").prepend(d);
+      setXfer("imgbb upload failed: " + err.message);
+    });
+  });
+
+  /* File → P2P WebRTC to all online peers → chat message */
+  document.getElementById("fileBtn").addEventListener("click", function () {
+    document.getElementById("fileInput").click();
+  });
+  document.getElementById("fileInput").addEventListener("change", function () {
+    var file = this.files[0];
+    this.value = "";
+    if (!file) return;
+    setXfer("connecting P2P…");
+    gunx.shareFile(file, {}, function (err, res) {
+      if (err) {
+        setXfer(err.message === "no peers available"
+          ? "no peers online — open this page in a second tab"
+          : "P2P send failed: " + err.message);
+        return;
+      }
+      setXfer("");
+      chatMsg("sent file via P2P", null, { name: res.name, size: res.size });
     });
   });
 })();
