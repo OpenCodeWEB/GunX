@@ -396,11 +396,14 @@
   };
 
   /** gun rejects DOM objects (RTCSessionDescription/RTCIceCandidate) as
-   *  "Invalid data" — convert them to plain JSON-safe objects first. */
+   *  "Invalid data" AND converts any nested object value into a child
+   *  soul reference — so signaling payloads must be completely flat:
+   *  {sdpType, sdp} for descriptions, {iceCandidate, sdpMid,
+   *  sdpMLineIndex, usernameFragment} for candidates. */
   GunX.prototype._sigPlain = function (sdp, ice) {
-    if (sdp) return { type: sdp.type, sdp: sdp.sdp };
+    if (sdp) return { sdpType: sdp.type, sdp: sdp.sdp };
     if (ice) return {
-      candidate: ice.candidate,
+      iceCandidate: ice.candidate,
       sdpMid: ice.sdpMid,
       sdpMLineIndex: ice.sdpMLineIndex,
       usernameFragment: ice.usernameFragment,
@@ -410,15 +413,15 @@
   GunX.prototype._onSignal = function (from, data) {
     var self = this;
     var r = this._rtcGet(from);
-    if (data.sdp) {
-      var sdp = data.sdp;
+    if (data.sdpType) {
+      var sdp = { type: data.sdpType, sdp: data.sdp };
       if (sdp.type === "offer") {
         if (r.pc) return; // already negotiating
         r.role = "receiver";
         var accept = function () {
           r.accepted = true;
           r.pc = new RTCPeerConnection(self.rtcConfig);
-          r.pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(from, { ice: self._sigPlain(null, e.candidate) }); };
+          r.pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(from, self._sigPlain(null, e.candidate)); };
           r.pc.oniceconnectionstatechange = function () {
             if (r.pc && (r.pc.iceConnectionState === "failed" || r.pc.iceConnectionState === "closed")) self._rtcClean(from);
           };
@@ -426,7 +429,7 @@
           r.pc.setRemoteDescription(new RTCSessionDescription(sdp))
             .then(function () { return r.pc.createAnswer(); })
             .then(function (answer) { return r.pc.setLocalDescription(answer); })
-            .then(function () { self._sigWrite(from, { sdp: self._sigPlain(r.pc.localDescription) }); })
+            .then(function () { self._sigWrite(from, self._sigPlain(r.pc.localDescription)); })
             .catch(function (err) { self._fxError(from, err); });
         };
         if (this._autoAccept || !this._fileOfferCb) accept();
@@ -434,8 +437,13 @@
       } else if (sdp.type === "answer" && r.pc && !r.pc.remoteDescription) {
         r.pc.setRemoteDescription(new RTCSessionDescription(sdp)).catch(function (err) { self._fxError(from, err); });
       }
-    } else if (data.ice && r.pc) {
-      r.pc.addIceCandidate(new RTCIceCandidate(data.ice)).catch(function () { /* trickle race, fine */ });
+    } else if (data.iceCandidate && r.pc) {
+      r.pc.addIceCandidate(new RTCIceCandidate({
+        candidate: data.iceCandidate,
+        sdpMid: data.sdpMid,
+        sdpMLineIndex: data.sdpMLineIndex,
+        usernameFragment: data.usernameFragment,
+      })).catch(function () { /* trickle race, fine */ });
     }
   };
 
@@ -551,7 +559,7 @@
     r.file = file;
     r.sent = 0;
     var pc = (r.pc = new RTCPeerConnection(this.rtcConfig));
-    pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(to, { ice: self._sigPlain(null, e.candidate) }); };
+    pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(to, self._sigPlain(null, e.candidate)); };
     pc.oniceconnectionstatechange = function () {
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
         if (cb) cb(new Error("ice " + pc.iceConnectionState));
@@ -592,7 +600,7 @@
     ch.onerror = function () { if (cb) cb(new Error("channel error")); };
     pc.createOffer()
       .then(function (offer) { return pc.setLocalDescription(offer); })
-      .then(function () { self._sigWrite(to, { sdp: self._sigPlain(pc.localDescription) }); })
+      .then(function () { self._sigWrite(to, self._sigPlain(pc.localDescription)); })
       .catch(function (err) { if (cb) cb(err); self._rtcClean(to); });
   };
 
