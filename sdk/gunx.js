@@ -82,6 +82,19 @@
     this.trackedSouls = Object.create(null);
     this._listeners = Object.create(null);
     this._destroyed = false;
+    // File sharing (WebRTC, PairDrop-inspired) + imgbb image hosting config.
+    this.rtcConfig = options.rtcConfig || { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+    this._imgbbKey = options.imgbbKey || null;
+    this._imgbbProxy = options.imgbbProxy || null;
+    this._autoAccept = !!options.autoAccept;
+    this._fxId = null;
+    this._sigSeq = 0;
+    this._rtc = Object.create(null);
+    this._peerSnap = Object.create(null);
+    this._fileOfferCb = null;
+    this._fileCb = null;
+    this._progressCb = null;
+    this.storage = { uploadImage: this.uploadImage.bind(this) };
 
     var peers = options.peers || DEFAULT_PEERS;
     var gunOpts = {
@@ -263,10 +276,371 @@
     },
   };
 
+  /* ── Presence (ephemeral online state) ─────────────────────────── */
+
+  /** Stable-ish id for this client, used for presence + P2P signaling. */
+  GunX.prototype.myId = function () {
+    if (!this._fxId) this._fxId = randomId() + Date.now().toString(36).slice(-4);
+    return this._fxId;
+  };
+
+  /** Namespaced internal soul: appKey/fx/<soul>. */
+  GunX.prototype._fx = function (soul) {
+    return this.gun.get(this.ns("fx/" + soul));
+  };
+
+  /**
+   * Register this client as online. Heartbeat refreshes `ts` every ttl/2
+   * (min 10s) so other clients can prune dead peers. Returns myId.
+   */
+  GunX.prototype.joinPresence = function (meta, ttl) {
+    var self = this;
+    var id = this.myId();
+    this._presenceMeta = meta || {};
+    this._presenceTtl = ttl || 60000;
+    var beat = function () {
+      if (self._destroyed) { clearInterval(self._presenceTimer); return; }
+      self._fx("peers").get(id).put({ id: id, name: self._presenceMeta.name || "", on: true, ts: Date.now() });
+    };
+    beat();
+    if (this._presenceTimer) clearInterval(this._presenceTimer);
+    this._presenceTimer = setInterval(beat, Math.max(10000, this._presenceTtl / 2));
+    return id;
+  };
+
+  /** Take this client offline. */
+  GunX.prototype.leavePresence = function () {
+    if (this._presenceTimer) { clearInterval(this._presenceTimer); this._presenceTimer = null; }
+    if (!this._fxId) return this;
+    this._fx("peers").get(this._fxId).put({ id: this._fxId, on: false, ts: Date.now() });
+    return this;
+  };
+
+  /**
+   * Watch online peers. cb(list) fires whenever the peer set changes.
+   * Dead peers (on:false / missing / stale ts) are pruned.
+   */
+  GunX.prototype.onPeers = function (cb) {
+    var self = this;
+    this._fx("peers").map().on(function (data, key) {
+      if (self._destroyed) return;
+      var snap = self._peerSnap;
+      if (!data || data.on === false) {
+        if (snap[key]) { delete snap[key]; self._emitPeers(cb); }
+        return;
+      }
+      if (key === self.myId()) return;
+      var stale = data.ts && Date.now() - data.ts > (self._presenceTtl || 60000) * 2;
+      if (stale) {
+        if (snap[key]) { delete snap[key]; self._emitPeers(cb); }
+        return;
+      }
+      var p = { id: key, name: data.name || "", ts: data.ts || 0 };
+      var changed = !snap[key] || snap[key].name !== p.name || snap[key].ts !== p.ts;
+      snap[key] = p;
+      if (changed) {
+        // New peer: attach the signaling listener for this direction.
+        if (!self._sigListening) self._sigListening = Object.create(null);
+        if (!self._sigListening[key]) {
+          self._sigListening[key] = 1;
+          self._sigListen(key);
+        }
+        self._emitPeers(cb);
+      }
+    });
+    return this;
+  };
+
+  GunX.prototype._emitPeers = function (cb) {
+    var list = [];
+    for (var k in this._peerSnap) list.push(this._peerSnap[k]);
+    if (cb) cb(list);
+  };
+
+  /** Current peer snapshot. */
+  GunX.prototype.peers = function () {
+    var list = [];
+    for (var k in this._peerSnap) list.push(this._peerSnap[k]);
+    return list;
+  };
+
+  /* ── P2P file sharing (WebRTC, PairDrop-inspired) ─────────────── */
+
+  GunX.prototype._rtcGet = function (peerId) {
+    if (!this._rtc[peerId]) this._rtc[peerId] = { peerId: peerId };
+    return this._rtc[peerId];
+  };
+
+  /** Write one signaling message (offer / answer / ice) via gun souls. */
+  GunX.prototype._sigWrite = function (to, payload) {
+    var id = this.myId();
+    var key = id.slice(0, 6) + "-" + (++this._sigSeq);
+    this.gun.get(this.ns("fx/sig")).get(id).get(to).get(key).put(payload);
+  };
+
+  /** Listen for signaling messages from `from` (on the soul from→me). */
+  GunX.prototype._sigListen = function (from) {
+    var self = this;
+    var id = this.myId();
+    var dir = from + "/" + id;
+    var seen = (this._sigSeen = this._sigSeen || Object.create(null));
+    if (!seen[dir]) seen[dir] = Object.create(null);
+    // Track so late joiners catch up via the auto-refresh get.
+    this.trackedSouls[this.ns("fx/sig") + "/" + from + "/" + id] = 1;
+    this.gun.get(this.ns("fx/sig")).get(from).get(id).map().on(function (data, key) {
+      if (self._destroyed || !data) return;
+      if (seen[dir][key]) return; // gun re-emits; dedupe
+      seen[dir][key] = 1;
+      self._onSignal(from, data);
+    });
+  };
+
+  GunX.prototype._onSignal = function (from, data) {
+    var self = this;
+    var r = this._rtcGet(from);
+    if (data.sdp) {
+      var sdp = data.sdp;
+      if (sdp.type === "offer") {
+        if (r.pc) return; // already negotiating
+        r.role = "receiver";
+        var accept = function () {
+          r.accepted = true;
+          r.pc = new RTCPeerConnection(self.rtcConfig);
+          r.pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(from, { ice: e.candidate }); };
+          r.pc.oniceconnectionstatechange = function () {
+            if (r.pc && (r.pc.iceConnectionState === "failed" || r.pc.iceConnectionState === "closed")) self._rtcClean(from);
+          };
+          r.pc.ondatachannel = function (e) { self._onChannel(from, e.channel); };
+          r.pc.setRemoteDescription(new RTCSessionDescription(sdp))
+            .then(function () { return r.pc.createAnswer(); })
+            .then(function (answer) { return r.pc.setLocalDescription(answer); })
+            .then(function () { self._sigWrite(from, { sdp: r.pc.localDescription }); })
+            .catch(function (err) { self._fxError(from, err); });
+        };
+        if (this._autoAccept || !this._fileOfferCb) accept();
+        else this._fileOfferCb({ from: from, accept: accept, reject: function () { self._rtcClean(from); } });
+      } else if (sdp.type === "answer" && r.pc && !r.pc.remoteDescription) {
+        r.pc.setRemoteDescription(new RTCSessionDescription(sdp)).catch(function (err) { self._fxError(from, err); });
+      }
+    } else if (data.ice && r.pc) {
+      r.pc.addIceCandidate(new RTCIceCandidate(data.ice)).catch(function () { /* trickle race, fine */ });
+    }
+  };
+
+  /**
+   * Receive side. cb({from, name, size, type, save}) fires when a file
+   * transfer is established. Call save() to keep the file (auto-saved
+   * when autoAccept is on or when no offer handler is registered).
+   */
+  GunX.prototype.onFileOffer = function (cb) {
+    this._fileOfferCb = cb;
+    return this;
+  };
+
+  /** Receive completed file. cb({blob, name, size, type, from}). */
+  GunX.prototype.onFile = function (cb) {
+    this._fileCb = cb;
+    return this;
+  };
+
+  /** Progress events: {direction, to|from, name, sent|received, total}. */
+  GunX.prototype.onTransferProgress = function (cb) {
+    this._progressCb = cb;
+    return this;
+  };
+
+  /** Shared channel plumbing for the receiver side. */
+  GunX.prototype._onChannel = function (from, channel) {
+    var self = this;
+    var r = this._rtcGet(from);
+    channel.binaryType = "arraybuffer";
+    r.channel = channel;
+    r.chunks = [];
+    r.received = 0;
+    channel.onmessage = function (e) {
+      if (typeof e.data === "string") {
+        var m;
+        try { m = JSON.parse(e.data); } catch (err) { return; }
+        if (m.type === "start") {
+          r.meta = m;
+          r.chunks = [];
+          r.received = 0;
+        } else if (m.type === "end") {
+          self._fxComplete(from);
+        }
+      } else {
+        r.received += e.data.byteLength;
+        r.chunks.push(e.data);
+        if (self._progressCb) {
+          self._progressCb({ direction: "in", from: from, name: r.meta && r.meta.name, received: r.received, total: (r.meta && r.meta.size) || 0 });
+        }
+      }
+    };
+    channel.onclose = function () { self._rtcClean(from); };
+  };
+
+  GunX.prototype._fxComplete = function (from) {
+    var r = this._rtc[from];
+    if (!r || !r.meta) return;
+    var blob = new Blob(r.chunks || [], { type: r.meta.type || "application/octet-stream" });
+    var file = { blob: blob, name: r.meta.name, size: r.meta.size, type: blob.type, from: from };
+    // Persist a lightweight metadata node for chat-style apps.
+    var transferId = randomId();
+    this.gun.get(this.ns("fx/files")).get(transferId).put({
+      name: file.name, size: file.size, type: file.type, from: from, to: this.myId(), ts: Date.now(),
+    });
+    if (this._fileCb) this._fileCb(file);
+    this._rtcClean(from);
+  };
+
+  GunX.prototype._fxError = function (peerId, err) {
+    this._rtcClean(peerId);
+    if (this._fileCb) this._fileCb({ error: err, from: peerId });
+  };
+
+  GunX.prototype._rtcClean = function (peerId) {
+    var r = this._rtc[peerId];
+    if (!r) return;
+    try { if (r.channel) r.channel.close(); } catch (e) { /* noop */ }
+    try { if (r.pc) r.pc.close(); } catch (e) { /* noop */ }
+    delete this._rtc[peerId];
+  };
+
+  /**
+   * Send a file to one peer (opts.to) or to every currently-known peer
+   * (default). Chunked 64KB over an ordered RTC data channel; signaling
+   * flows through gun souls, so no relay ever sees file bytes.
+   */
+  GunX.prototype.shareFile = function (file, opts, cb) {
+    var self = this;
+    opts = opts || {};
+    var targets = opts.to ? [opts.to] : [];
+    if (!targets.length) targets = this.peers().map(function (p) { return p.id; });
+    if (!targets.length) {
+      if (cb) cb(new Error("no peers available"));
+      return this;
+    }
+    targets.forEach(function (to) { self._sendFileTo(file, to, cb); });
+    return this;
+  };
+
+  GunX.prototype._sendFileTo = function (file, to, cb) {
+    var self = this;
+    // Ensure we can hear this peer's answer + ICE even if it was never
+    // discovered via presence (explicit opts.to).
+    if (!this._sigListening) this._sigListening = Object.create(null);
+    if (!this._sigListening[to]) {
+      this._sigListening[to] = 1;
+      this._sigListen(to);
+    }
+    var r = this._rtcGet(to);
+    r.role = "sender";
+    r.file = file;
+    r.sent = 0;
+    var pc = (r.pc = new RTCPeerConnection(this.rtcConfig));
+    pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(to, { ice: e.candidate }); };
+    pc.oniceconnectionstatechange = function () {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+        if (cb) cb(new Error("ice " + pc.iceConnectionState));
+        self._rtcClean(to);
+      }
+    };
+    var ch = pc.createDataChannel("gunx-file", { ordered: true });
+    ch.binaryType = "arraybuffer";
+    r.channel = ch;
+    ch.onopen = function () {
+      ch.send(JSON.stringify({ type: "start", name: file.name, size: file.size, type: file.type || "application/octet-stream" }));
+      var offset = 0, chunkSize = 64000;
+      var reader = new FileReader();
+      var readNext = function () { reader.readAsArrayBuffer(file.slice(offset, Math.min(offset + chunkSize, file.size))); };
+      reader.onload = function (e) {
+        if (self._destroyed || ch.readyState !== "open") return;
+        var buf = e.target.result;
+        ch.send(buf);
+        r.sent += buf.byteLength;
+        if (self._progressCb) {
+          self._progressCb({ direction: "out", to: to, name: file.name, sent: r.sent, total: file.size });
+        }
+        offset += buf.byteLength;
+        if (offset < file.size) readNext();
+        else { ch.send(JSON.stringify({ type: "end" })); if (cb) cb(null, { name: file.name, size: file.size, to: to }); }
+      };
+      reader.onerror = function () { if (cb) cb(new Error("file read failed")); };
+      readNext();
+    };
+    ch.onerror = function () { if (cb) cb(new Error("channel error")); };
+    pc.createOffer()
+      .then(function (offer) { return pc.setLocalDescription(offer); })
+      .then(function () { self._sigWrite(to, { sdp: pc.localDescription }); })
+      .catch(function (err) { if (cb) cb(err); self._rtcClean(to); });
+  };
+
+  /* ── Image hosting via imgbb ──────────────────────────────────── */
+
+  /**
+   * Upload an image (File/Blob/dataURL/URL) to imgbb. Requires an imgbb
+   * API key (opts.key, or the GunX({imgbbKey}) option) OR a self-hosted
+   * proxy (opts.proxy or GunX({imgbbProxy})) that injects the key.
+   * Resolves with the imgbb data block {url, thumb, display_url, ...}.
+   */
+  GunX.prototype.uploadImage = function (image, opts) {
+    opts = opts || {};
+    var self = this;
+    return new Promise(function (resolve, reject) {
+      var proxy = opts.proxy || self._imgbbProxy;
+      var key = opts.key || self._imgbbKey;
+      var post = function (value) {
+        var body;
+        if (proxy) {
+          // Server-side proxy: multipart file upload. The key stays on the
+          // server (Pages secret) — clients never see it.
+          var fd = new FormData();
+          if (typeof value === "string" && value.indexOf("data:") === 0) {
+            var m = /^data:([^;,]+)?(;[^,]*)?,(.*)$/s.exec(value);
+            var bin = atob(m[3]);
+            var bytes = new Uint8Array(bin.length);
+            for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+            fd.append("image", new Blob([bytes], { type: (m && m[1]) || "image/png" }), "upload.png");
+          } else {
+            fd.append("image", value, (value && value.name) || "upload.png");
+          }
+          body = fd;
+        } else {
+          // Direct imgbb API — only for SDK users who hold their own key.
+          if (!key) return reject(new Error("no imgbb key or proxy configured"));
+          var fd = new FormData();
+          fd.append("key", key);
+          if (typeof value === "string" && value.indexOf("data:") === 0) fd.append("image", value.split(",")[1]);
+          else fd.append("image", value, (value && value.name) || "upload.png");
+          body = fd;
+        }
+        fetch(proxy || "https://api.imgbb.com/1/upload", { method: "POST", body: body })
+          .then(function (r) { return r.json(); })
+          .then(function (json) {
+            if (!json) return reject(new Error("empty upload response"));
+            if (json.error) return reject(new Error((json.error && (json.error.message || json.error)) || "imgbb upload failed"));
+            // Direct API wraps data in {data:{...}}; our proxy returns the flat block.
+            resolve(json.data || json);
+          })
+          .catch(reject);
+      };
+      if (typeof image === "string") post(image);
+      else if (image instanceof Blob) post(image);
+      else {
+        var reader = new FileReader();
+        reader.onload = function (e) { post(String(e.target.result)); };
+        reader.onerror = function () { reject(new Error("image read failed")); };
+        reader.readAsDataURL(image);
+      }
+    });
+  };
+
   /* ── Teardown ────────────────────────────────────────────────────── */
 
   GunX.prototype.destroy = function () {
     this._destroyed = true;
+    this.leavePresence();
+    for (var k in this._rtc) this._rtcClean(k);
     if (this._refreshTimer) clearInterval(this._refreshTimer);
     try {
       if (this._hi && this._hi.off) this._hi.off();
