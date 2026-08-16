@@ -200,7 +200,7 @@ gunx.put('todos', { hello: 'world' });</pre>
   var form = document.getElementById("msgForm");
   var input = document.getElementById("msgInput");
 
-  function addMsg(text, mine, img, file) {
+  function addMsg(text, mine, img, fname, fsize) {
     var div = document.createElement("div");
     div.className = "msg-in flex " + (mine ? "justify-end" : "justify-start");
     var extra = "";
@@ -208,15 +208,15 @@ gunx.put('todos', { hello: 'world' });</pre>
       extra += '<a href="' + img + '" target="_blank" rel="noopener"><img src="' + img +
         '" class="mt-2 max-h-48 rounded-lg border border-slate-700 object-cover" alt=""></a>';
     }
-    if (file) {
+    if (fname) {
       extra += '<div class="mt-2 flex items-center gap-2 text-xs"><i class="fa-solid fa-file text-teal-400"></i>' +
-        "<span>" + file.name.replace(/</g, "&lt;") + "</span><span class=\"text-slate-500 mono\">" + fmt(file.size) + "B</span></div>";
+        "<span>" + String(fname).replace(/</g, "&lt;") + "</span><span class=\"text-slate-500 mono\">" + fmt(fsize || 0) + "B</span></div>";
     }
     div.innerHTML = '<span class="max-w-[80%] px-3 py-2 rounded-2xl text-sm break-words ' +
       (mine
         ? "bg-gradient-to-r from-teal-500/20 to-cyan-600/20 border border-teal-500/30 text-teal-100"
         : "bg-slate-800 border border-slate-700 text-slate-200") + '">' +
-      text.replace(/</g, "&lt;") + extra + "</span>";
+      String(text).replace(/</g, "&lt;") + extra + "</span>";
     msgs.appendChild(div);
     msgs.scrollTop = msgs.scrollHeight;
   }
@@ -225,7 +225,7 @@ gunx.put('todos', { hello: 'world' });</pre>
     if (!data || typeof data.t !== "string") return;
     // de-dup: the relay may re-emit existing fields on merge
     if (document.getElementById("m-" + key)) return;
-    addMsg(data.t, false, data.img, data.file);
+    addMsg(data.t, false, data.img, data.fname, data.fsize);
     var marker = document.createElement("span");
     marker.id = "m-" + key;
     marker.style.display = "none";
@@ -299,25 +299,25 @@ gunx.put('todos', { hello: 'world' });</pre>
     setXfer((dir === "sending" ? "↑" : "↓") + " " + (p.name || "file") + " " + pct + "% (" + fmt(done) + "B / " + fmt(p.total) + "B)");
   });
 
-  function chatMsg(t, img, file) {
+  function chatMsg(t, img, fname, fsize) {
     var id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     var node = { t: t, from: "local" };
     if (img) node.img = img;
-    if (file) node.file = file;
+    if (fname) { node.fname = fname; node.fsize = fsize || 0; } // flat — gun turns nested objects into child soul refs
     gunx.put("chat/" + id, node);
-    addMsg(t, true, img, file);
+    addMsg(t, true, img, fname, fsize);
   }
 
   gunx.onFile(function (f) {
     if (f.error) { setXfer("P2P transfer failed: " + f.error.message); return; }
     setXfer(""); // clear progress line
-    chatMsg("received file via P2P", null, { name: f.name, size: f.size });
+    chatMsg("received file via P2P", null, f.name, f.size);
     // Download link lives only in this browser (P2P — bytes never touched the relay).
     var a = document.createElement("a");
     a.href = URL.createObjectURL(f.blob);
     a.download = f.name;
     a.className = "mt-1 inline-flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-teal-500/50 transition-colors";
-    a.innerHTML = '<i class="fa-solid fa-download text-teal-400"></i> Save ' + esc(f.name) +
+    a.innerHTML = '<i class="fa-solid fa-download text-teal-400"></i> Save ' + String(f.name).replace(/</g, "&lt;") +
       ' <span class="text-slate-500 mono">(' + fmt(f.size) + "B)</span>";
     document.getElementById("messages").appendChild(a);
   });
@@ -356,7 +356,7 @@ gunx.put('todos', { hello: 'world' });</pre>
         return;
       }
       setXfer("");
-      chatMsg("sent file via P2P", null, { name: res.name, size: res.size });
+      chatMsg("sent file via P2P", null, res.name, res.size);
     });
   });
 })();
