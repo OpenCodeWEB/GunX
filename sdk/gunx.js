@@ -487,6 +487,8 @@
           r.received = 0;
         } else if (m.type === "end") {
           self._fxComplete(from);
+        } else if (m.type === "cancel") {
+          self._rtcClean(from);
         }
       } else {
         r.received += e.data.byteLength;
@@ -502,7 +504,7 @@
   GunX.prototype._fxComplete = function (from) {
     var r = this._rtc[from];
     if (!r || !r.meta) return;
-    var blob = new Blob(r.chunks || [], { type: r.meta.type || "application/octet-stream" });
+    var blob = new Blob(r.chunks || [], { type: r.meta.mime || "application/octet-stream" });
     var file = { blob: blob, name: r.meta.name, size: r.meta.size, type: blob.type, from: from };
     // Persist a lightweight metadata node for chat-style apps.
     var transferId = randomId();
@@ -529,8 +531,10 @@
 
   /**
    * Send a file to one peer (opts.to) or to every currently-known peer
-   * (default). Chunked 64KB over an ordered RTC data channel; signaling
-   * flows through gun souls, so no relay ever sees file bytes.
+   * (default). Adaptive 64KB–256KB chunks over an ordered RTC data
+   * channel (PairDrop-style: tiny chunks start instantly, doubling ramps
+   * huge files; bufferedAmount backpressure prevents flooding). No size
+   * limits — signaling flows through gun souls, bytes never touch a relay.
    */
   GunX.prototype.shareFile = function (file, opts, cb) {
     var self = this;
@@ -578,21 +582,45 @@
     r.channel = ch;
     ch.onopen = function () {
       if (r.timeout) { clearTimeout(r.timeout); r.timeout = null; }
-      ch.send(JSON.stringify({ type: "start", name: file.name, size: file.size, type: file.type || "application/octet-stream" }));
-      var offset = 0, chunkSize = 64000;
+      // NOTE: `mime` must not be named `type` — gun-style receivers match
+      // the control message on `m.type`, and a duplicate key would let
+      // file.type overwrite "start" (silent deadlock on completion).
+      ch.send(JSON.stringify({ type: "start", name: file.name, size: file.size, mime: file.type || "application/octet-stream" }));
+      // PairDrop-inspired adaptive chunking. Chrome's max SCTP message is
+      // 256KB, so 256KB is the safe ceiling; 64KB keeps first-byte latency
+      // tiny for small files. No file-size limit anywhere.
+      var CHUNK_MIN = 64000, CHUNK_MAX = 262144;
+      var offset = 0, chunkSize = CHUNK_MIN, quietRuns = 0, lastT = 0;
       var reader = new FileReader();
-      var readNext = function () { reader.readAsArrayBuffer(file.slice(offset, Math.min(offset + chunkSize, file.size))); };
+      var readNext = function () {
+        reader.readAsArrayBuffer(file.slice(offset, Math.min(offset + chunkSize, file.size)));
+      };
       reader.onload = function (e) {
         if (self._destroyed || ch.readyState !== "open") return;
         var buf = e.target.result;
         ch.send(buf);
         r.sent += buf.byteLength;
-        if (self._progressCb) {
-          self._progressCb({ direction: "out", to: to, name: file.name, sent: r.sent, total: file.size });
+        // Grow when the pipe stays clear; shrink under backpressure.
+        var buffered = ch.bufferedAmount;
+        if (buffered < 262144) {
+          if (++quietRuns >= 8 && chunkSize < CHUNK_MAX) { chunkSize = Math.min(CHUNK_MAX, chunkSize * 2); quietRuns = 0; }
+        } else if (buffered > 2097152) {
+          chunkSize = Math.max(CHUNK_MIN, Math.floor(chunkSize / 2));
+          quietRuns = 0;
         }
         offset += buf.byteLength;
+        var done = offset >= file.size;
+        // Throttle progress to ~20fps; always emit the final event.
+        var now = Date.now();
+        if (self._progressCb && (done || now - lastT > 50)) {
+          lastT = now;
+          self._progressCb({ direction: "out", to: to, name: file.name, sent: r.sent, total: file.size, ts: now, done: done });
+        }
         if (offset < file.size) readNext();
-        else { ch.send(JSON.stringify({ type: "end" })); if (cb) cb(null, { name: file.name, size: file.size, to: to }); }
+        else {
+          ch.send(JSON.stringify({ type: "end" }));
+          if (cb) cb(null, { name: file.name, size: file.size, to: to });
+        }
       };
       reader.onerror = function () { if (cb) cb(new Error("file read failed")); };
       readNext();
