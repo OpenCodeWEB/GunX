@@ -395,6 +395,18 @@
     });
   };
 
+  /** gun rejects DOM objects (RTCSessionDescription/RTCIceCandidate) as
+   *  "Invalid data" — convert them to plain JSON-safe objects first. */
+  GunX.prototype._sigPlain = function (sdp, ice) {
+    if (sdp) return { type: sdp.type, sdp: sdp.sdp };
+    if (ice) return {
+      candidate: ice.candidate,
+      sdpMid: ice.sdpMid,
+      sdpMLineIndex: ice.sdpMLineIndex,
+      usernameFragment: ice.usernameFragment,
+    };
+  };
+
   GunX.prototype._onSignal = function (from, data) {
     var self = this;
     var r = this._rtcGet(from);
@@ -406,7 +418,7 @@
         var accept = function () {
           r.accepted = true;
           r.pc = new RTCPeerConnection(self.rtcConfig);
-          r.pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(from, { ice: e.candidate }); };
+          r.pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(from, { ice: self._sigPlain(null, e.candidate) }); };
           r.pc.oniceconnectionstatechange = function () {
             if (r.pc && (r.pc.iceConnectionState === "failed" || r.pc.iceConnectionState === "closed")) self._rtcClean(from);
           };
@@ -414,7 +426,7 @@
           r.pc.setRemoteDescription(new RTCSessionDescription(sdp))
             .then(function () { return r.pc.createAnswer(); })
             .then(function (answer) { return r.pc.setLocalDescription(answer); })
-            .then(function () { self._sigWrite(from, { sdp: r.pc.localDescription }); })
+            .then(function () { self._sigWrite(from, { sdp: self._sigPlain(r.pc.localDescription) }); })
             .catch(function (err) { self._fxError(from, err); });
         };
         if (this._autoAccept || !this._fileOfferCb) accept();
@@ -501,6 +513,7 @@
   GunX.prototype._rtcClean = function (peerId) {
     var r = this._rtc[peerId];
     if (!r) return;
+    if (r.timeout) { clearTimeout(r.timeout); r.timeout = null; }
     try { if (r.channel) r.channel.close(); } catch (e) { /* noop */ }
     try { if (r.pc) r.pc.close(); } catch (e) { /* noop */ }
     delete this._rtc[peerId];
@@ -538,17 +551,25 @@
     r.file = file;
     r.sent = 0;
     var pc = (r.pc = new RTCPeerConnection(this.rtcConfig));
-    pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(to, { ice: e.candidate }); };
+    pc.onicecandidate = function (e) { if (e.candidate) self._sigWrite(to, { ice: self._sigPlain(null, e.candidate) }); };
     pc.oniceconnectionstatechange = function () {
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
         if (cb) cb(new Error("ice " + pc.iceConnectionState));
         self._rtcClean(to);
       }
     };
+    // Give the peer 45s to answer; otherwise abort the transfer.
+    r.timeout = setTimeout(function () {
+      if (r.channel && r.channel.readyState !== "open") {
+        if (cb) cb(new Error("peer did not answer"));
+        self._rtcClean(to);
+      }
+    }, 45000);
     var ch = pc.createDataChannel("gunx-file", { ordered: true });
     ch.binaryType = "arraybuffer";
     r.channel = ch;
     ch.onopen = function () {
+      if (r.timeout) { clearTimeout(r.timeout); r.timeout = null; }
       ch.send(JSON.stringify({ type: "start", name: file.name, size: file.size, type: file.type || "application/octet-stream" }));
       var offset = 0, chunkSize = 64000;
       var reader = new FileReader();
@@ -571,7 +592,7 @@
     ch.onerror = function () { if (cb) cb(new Error("channel error")); };
     pc.createOffer()
       .then(function (offer) { return pc.setLocalDescription(offer); })
-      .then(function () { self._sigWrite(to, { sdp: pc.localDescription }); })
+      .then(function () { self._sigWrite(to, { sdp: self._sigPlain(pc.localDescription) }); })
       .catch(function (err) { if (cb) cb(err); self._rtcClean(to); });
   };
 
