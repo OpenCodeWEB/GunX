@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GunX — Serverless GunDB. No relay server needed.</title>
+<meta name="description" content="GunX: use GunDB in any project through gunx.pages.dev — a free serverless relay on Cloudflare Workers + Durable Objects. P2P sync, offline-first, E2E encryption.">
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/sea.js"></script>
+<script src="/gunx.js"></script>
+<style>
+  body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  .glow { box-shadow: 0 0 40px rgba(20,184,166,.25); }
+  .msg-in { animation: fadein .3s ease; }
+  @keyframes fadein { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  ::-webkit-scrollbar { width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 8px; }
+</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen antialiased">
+
+<!-- Header -->
+<header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-50">
+  <div class="max-w-6xl mx-auto px-4 h-16 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400 to-cyan-600 flex items-center justify-center font-bold text-slate-950 text-xl">
+        <i class="fa-solid fa-network-wired"></i>
+      </div>
+      <div>
+        <span class="font-extrabold text-xl tracking-tight bg-gradient-to-r from-teal-400 via-cyan-300 to-blue-400 bg-clip-text text-transparent">GunX</span>
+        <span class="text-xs ml-2 px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-400 border border-teal-500/20 mono">gunx.pages.dev</span>
+      </div>
+    </div>
+    <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
+      <a href="#playground" class="hover:text-teal-400 transition-colors">Playground</a>
+      <a href="#quickstart" class="hover:text-teal-400 transition-colors">Quickstart</a>
+      <a href="#features" class="hover:text-teal-400 transition-colors">Features</a>
+      <a href="https://github.com/OpenCodeWEB/GunX" target="_blank" class="hover:text-teal-400 transition-colors"><i class="fa-brands fa-github"></i> GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<!-- Hero -->
+<section class="max-w-6xl mx-auto px-4 pt-16 pb-10 text-center">
+  <h1 class="text-4xl md:text-6xl font-extrabold tracking-tight">
+    Serverless <span class="bg-gradient-to-r from-teal-400 via-cyan-300 to-blue-400 bg-clip-text text-transparent">GunDB</span> for everyone
+  </h1>
+  <p class="mt-4 text-lg text-slate-400 max-w-2xl mx-auto">
+    Connect any app to a free, always-on GunDB relay. No relay server to run,
+    no backend to deploy — realtime P2P sync, offline-first storage, and SEA
+    end-to-end encryption, powered by Cloudflare Workers + Durable Objects.
+  </p>
+  <div class="mt-6 flex flex-wrap justify-center gap-3 text-sm">
+    <span id="statusPill" class="px-3 py-1.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono"><i class="fa-solid fa-circle text-amber-400"></i> connecting…</span>
+    <span id="statsPill" class="px-3 py-1.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono">nodes —</span>
+    <span id="peersPill" class="px-3 py-1.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono">peers —</span>
+  </div>
+</section>
+
+<!-- Playground -->
+<section id="playground" class="max-w-6xl mx-auto px-4 py-10">
+  <div class="rounded-2xl border border-slate-800 bg-slate-900/60 glow overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 class="font-bold text-lg"><i class="fa-solid fa-tower-broadcast text-teal-400 mr-2"></i>Live P2P playground</h2>
+      <div class="flex items-center gap-2 text-xs text-slate-400 mono">
+        <span>room: gunx-playground/chat</span>
+        <button id="clearBtn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">clear</button>
+      </div>
+    </div>
+    <div class="grid md:grid-cols-3">
+      <div class="md:col-span-2 p-6">
+        <div id="messages" class="h-72 overflow-y-auto space-y-2 pr-2"></div>
+        <form id="msgForm" class="mt-4 flex gap-2">
+          <input id="msgInput" type="text" autocomplete="off" placeholder="Type a message — it syncs to every open visitor in realtime…"
+            class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/50">
+          <button type="submit" class="bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-5 py-2.5 rounded-lg text-sm hover:opacity-90">Send</button>
+        </form>
+        <p class="mt-3 text-xs text-slate-500">Open this page in two tabs — messages appear in both in realtime through gunx.pages.dev.</p>
+      </div>
+      <div class="border-t md:border-t-0 md:border-l border-slate-800 p-6 bg-slate-950/40">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">How it works</h3>
+        <ol class="text-sm text-slate-400 space-y-3 list-decimal list-inside">
+          <li>Your app connects <span class="mono text-teal-300">wss://gunx.pages.dev/gun</span></li>
+          <li>GunX namespaces your data with an <span class="mono text-teal-300">appKey</span></li>
+          <li>Puts are merged (LWW) into DO SQLite and relayed to peers live</li>
+          <li>IndexedDB keeps you offline-first; auto-refresh re-syncs remote changes</li>
+        </ol>
+        <div class="mt-6 pt-4 border-t border-slate-800">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Relay status</h3>
+          <dl class="text-sm space-y-1 mono" id="statDetail">
+            <div class="flex justify-between"><dt class="text-slate-500">uptime</dt><dd id="stUptime">—</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">messages</dt><dd id="stMessages">—</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">bytes</dt><dd id="stBytes">—</dd></div>
+            <div class="flex justify-between"><dt class="text-slate-500">backend</dt><dd id="stBackend">—</dd></div>
+          </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Quickstart -->
+<section id="quickstart" class="max-w-6xl mx-auto px-4 py-10">
+  <h2 class="text-2xl font-bold mb-6">Quickstart</h2>
+  <div class="grid md:grid-cols-2 gap-6">
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <h3 class="text-sm font-semibold text-slate-300 mb-3"><i class="fa-brands fa-js text-yellow-400 mr-2"></i>Browser (script tag)</h3>
+      <pre class="mono text-xs text-teal-200 bg-slate-950 rounded-lg p-4 overflow-x-auto">&lt;script src="https://cdn.jsdelivr.net/npm/gun/gun.js"&gt;&lt;/script&gt;
+&lt;script src="https://cdn.jsdelivr.net/npm/gun/sea.js"&gt;&lt;/script&gt;
+&lt;script src="https://cdn.jsdelivr.net/gh/OpenCodeWEB/GunX@main/public/gunx.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const gunx = GunX({ appKey: 'my-app' });
+  gunx.get('todos').map().on((v, k) =&gt;
+    console.log('todo:', k, v));
+  gunx.put('todos', { learn: 'GunX' });
+&lt;/script&gt;</pre>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <h3 class="text-sm font-semibold text-slate-300 mb-3"><i class="fa-brands fa-node-js text-green-400 mr-2"></i>Node / npm</h3>
+      <pre class="mono text-xs text-teal-200 bg-slate-950 rounded-lg p-4 overflow-x-auto">const Gun = require('gun');
+const GunX = require('./sdk/gunx.js'); // or your bundled copy
+
+const gunx = GunX({ appKey: 'my-app' });
+
+gunx.on('status', ({ status }) =&gt;
+  console.log('relay:', status));
+
+gunx.get('todos').once(console.log);
+gunx.put('todos', { hello: 'world' });</pre>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features" class="max-w-6xl mx-auto px-4 py-10">
+  <h2 class="text-2xl font-bold mb-6">Why GunX</h2>
+  <div class="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-server text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">No relay server needed</h3>
+      <p class="text-sm text-slate-400 mt-1">The relay runs on Cloudflare Workers + Durable Objects (SQLite). Zero infrastructure to own, zero cost to start.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-layer-group text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">App namespacing</h3>
+      <p class="text-sm text-slate-400 mt-1">Every project gets an isolated <span class="mono text-teal-300">appKey</span> namespace — no key collisions on the shared relay.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-arrows-rotate text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">Auto-refresh sync</h3>
+      <p class="text-sm text-slate-400 mt-1">The SDK re-asks the relay for subscribed souls, fixing GunDB's IndexedDB re-ask gap automatically.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-wifi text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">Offline-first</h3>
+      <p class="text-sm text-slate-400 mt-1">IndexedDB/radisk persistence keeps your app fully functional offline; changes sync when you reconnect.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-lock text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">SEA encryption</h3>
+      <p class="text-sm text-slate-400 mt-1">End-to-end encryption with the Security-Encryption-Authorization module; SDK includes pair persistence helpers.</p>
+    </div>
+    <div class="rounded-xl border border-slate-800 bg-slate-900/60 p-5">
+      <i class="fa-solid fa-gauge-high text-teal-400 text-xl"></i>
+      <h3 class="font-semibold mt-3">Rate-limited &amp; public</h3>
+      <p class="text-sm text-slate-400 mt-1">Token-bucket rate limiting and 1 MB frame caps keep the shared relay fair for everyone. Live stats at /api/stats.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="border-t border-slate-800 mt-10">
+  <div class="max-w-6xl mx-auto px-4 py-8 flex flex-col md:flex-row items-center justify-between text-sm text-slate-500">
+    <div class="flex items-center gap-2">
+      <span class="font-bold text-slate-300">GunX</span> — open-source, MIT
+      <a href="https://github.com/OpenCodeWEB/GunX" class="text-teal-400 hover:underline ml-1">GitHub</a>
+    </div>
+    <div class="mt-2 md:mt-0">Powered by <a href="https://gun.eco" class="text-teal-400 hover:underline">GunDB</a> · <a href="https://dash.cloudflare.com" class="text-teal-400 hover:underline">Cloudflare</a> · <a href="https://pocwu.pages.dev" class="text-teal-400 hover:underline">ABsUP / OpenCodeWEB</a></div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  "use strict";
+  var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000 });
+  var msgs = document.getElementById("messages");
+  var form = document.getElementById("msgForm");
+  var input = document.getElementById("msgInput");
+
+  function addMsg(text, mine) {
+    var div = document.createElement("div");
+    div.className = "msg-in flex " + (mine ? "justify-end" : "justify-start");
+    div.innerHTML = '<span class="max-w-[80%] px-3 py-2 rounded-2xl text-sm break-words ' +
+      (mine
+        ? "bg-gradient-to-r from-teal-500/20 to-cyan-600/20 border border-teal-500/30 text-teal-100"
+        : "bg-slate-800 border border-slate-700 text-slate-200") + '">' +
+      text.replace(/</g, "&lt;") + "</span>";
+    msgs.appendChild(div);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  gunx.get("chat").map().on(function (data, key) {
+    if (!data || typeof data.t !== "string") return;
+    // de-dup: the relay may re-emit existing fields on merge
+    if (document.getElementById("m-" + key)) return;
+    addMsg(data.t, false);
+    var marker = document.createElement("span");
+    marker.id = "m-" + key;
+    marker.style.display = "none";
+    document.body.appendChild(marker);
+  });
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    var t = input.value.trim();
+    if (!t) return;
+    gunx.put("chat/" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), { t: t, from: "local" });
+    addMsg(t, true);
+    input.value = "";
+  });
+
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    msgs.innerHTML = "";
+  });
+
+  /* status + stats pills */
+  gunx.on("status", function (s) {
+    var pill = document.getElementById("statusPill");
+    var on = s.status === "connected";
+    pill.innerHTML = on
+      ? '<i class="fa-solid fa-circle text-emerald-400"></i> connected'
+      : '<i class="fa-solid fa-circle text-amber-400"></i> ' + s.status;
+  });
+
+  function fmt(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+  function fmtTime(ms) {
+    var s = Math.floor(ms / 1000);
+    var d = Math.floor(s / 86400);
+    return d ? d + "d " + Math.floor((s % 86400) / 3600) + "h" : Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+  }
+  setInterval(function () {
+    fetch("/api/stats").then(function (r) { return r.json(); }).then(function (s) {
+      if (!s || !s.status) return;
+      document.getElementById("statsPill").textContent = "nodes " + fmt(s.graphNodes);
+      document.getElementById("peersPill").textContent = "conns " + s.connections;
+      document.getElementById("stUptime").textContent = fmtTime(s.uptimeMs);
+      document.getElementById("stMessages").textContent = fmt(s.messagesProcessed);
+      document.getElementById("stBytes").textContent = fmt(s.bytesTransferred);
+      document.getElementById("stBackend").textContent = s.storageBackend;
+    }).catch(function () {});
+  }, 5000);
+})();
+</script>
+</body>
+</html>

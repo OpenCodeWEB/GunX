@@ -1,0 +1,15 @@
+{
+  "name": "gunx",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GunX — serverless GunDB relay on Cloudflare Pages (gunx.pages.dev)",
+  "scripts": {
+    "deploy:worker": "npm --prefix worker run deploy",
+    "deploy:pages": "wrangler pages deploy public --project-name gunx",
+    "test": "node test/sdk-test.js"
+  },
+  "devDependencies": {
+    "gun": "^0.2020.1241",
+    "wrangler": "^4.118.0"
+  }
+}

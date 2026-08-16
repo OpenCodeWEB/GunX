@@ -1,0 +1,7 @@
+{
+  "name": "gunx-test",
+  "private": true,
+  "dependencies": {
+    "gun": "^0.2020.1241"
+  }
+}

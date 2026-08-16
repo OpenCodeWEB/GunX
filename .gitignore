@@ -1,0 +1,7 @@
+node_modules/
+.worker-configuration.d.ts
+wrangler.toml.bak
+*.log
+.DS_Store
+
+radata/

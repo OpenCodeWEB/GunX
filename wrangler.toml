@@ -1,0 +1,9 @@
+name = "gunx"
+compatibility_date = "2026-05-14"
+pages_build_output_dir = "public"
+
+# Bind the gun peer Durable Object worker (deployed separately from worker/)
+[[durable_objects.bindings]]
+name = "GUN_PEER"
+class_name = "GunPeerObject"
+script_name = "gunx-do"

@@ -1,0 +1,14 @@
+name = "gunx-do"
+main = "src/GunRelayDO.js"
+compatibility_date = "2026-05-14"
+
+[[durable_objects.bindings]]
+name = "GUN_PEER"
+class_name = "GunPeerObject"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GunPeerObject"]
+
+[observability]
+enabled = true
