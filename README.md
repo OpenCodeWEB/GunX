@@ -65,6 +65,13 @@ gunx.put('todos', { hello: 'world' });
 | `gunx.refresh()` | Force plain-soul GETs to the relay for every tracked soul |
 | `gunx.on('status', cb)` | `connecting` → `connected` / `disconnected` events |
 | `gunx.sea.savePair / loadPair / asyncAuth` | SEA pair persistence + user auth helpers |
+| `gunx.joinPresence(meta, ttl)` | Register as online (heartbeat); returns myId |
+| `gunx.onPeers(cb)` | Watch live peers; `cb(list)` on changes |
+| `gunx.shareFile(file, opts, cb)` | P2P WebRTC transfer to one peer (`opts.to`) or all online peers. Any size — adaptive 64KB–256KB chunks, no relay storage |
+| `gunx.onFile(cb)` | `cb({blob, name, size, type, from})` when a transfer completes |
+| `gunx.onFileOffer(cb)` | Intercept incoming transfers (accept/reject) — auto-accept when unset |
+| `gunx.onTransferProgress(cb)` | `{direction, to|from, name, sent|received, total, ts}` per transfer |
+| `gunx.uploadImage(image, opts)` | imgbb upload — `opts.proxy` (server-side, key stays secret) or `opts.key` (direct API) |
 | `gunx.destroy()` | Stop timers and listeners |
 
 ## How the relay works
@@ -102,6 +109,7 @@ GunX({ appKey: 'my-app', peers: ['wss://your-worker.pages.dev/gun'] });
 worker/src/GunRelayDO.js   — the Durable Object relay (hardened: rate limits, frame caps, batched stats)
 functions/gun.js           — Pages function: WebSocket upgrade → DO
 functions/api/stats.js     — /api/stats (live relay counters)
+functions/api/imgbb.js     — /api/imgbb (server-side imgbb proxy; key = Pages secret)
 functions/api/health.js    — /api/health
 functions/health.js        — /health alias
 sdk/gunx.js                — the client SDK (UMD: browser + Node)
@@ -109,6 +117,37 @@ public/index.html          — playground + docs page
 public/gunx.js             — SDK copy served at /gunx.js
 test/                      — raw protocol tests + SDK integration test
 ```
+
+## Image hosting + P2P files (playground features)
+
+### `/api/imgbb` — server-side image upload proxy
+
+The playground's 🖼️ button uploads images to imgbb.com through a Cloudflare
+Pages Function. **The API key never reaches the browser** — it lives only as a
+Pages secret, so nobody can steal it and abuse your imgbb account from their
+own site.
+
+```bash
+# one-time setup: store the key as a production secret
+npx wrangler pages secret put IMGBB_KEY --project-name gunx
+```
+
+The function enforces:
+
+- **Origin allowlist** — only your pages.dev domain (and `localhost` for dev)
+  may call it; anything else gets `403`. Add your own domains in
+  `functions/api/imgbb.js`.
+- **Per-IP rate limit** (20 uploads/min) and a **10 MB image cap**.
+- Only `image/*` files are accepted; the key is never included in responses.
+
+### P2P files — Snapdrop/PairDrop-style, no relay storage
+
+The 📎 button streams files **peer-to-peer over WebRTC data channels**:
+signaling (offer/answer/ICE) travels through gun souls, but file bytes never
+touch the relay. No size limits — chunks start at 64KB for instant first-byte
+latency and adapt up to 256KB (the browser-safe SCTP ceiling) under clear
+throughput, with `bufferedAmount` backpressure for huge files. Receivers get a
+Save link backed by an in-memory Blob (`URL.createObjectURL`).
 
 ## Tests
 

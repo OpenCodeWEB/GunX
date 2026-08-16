@@ -626,6 +626,7 @@
       readNext();
     };
     ch.onerror = function () { if (cb) cb(new Error("channel error")); };
+    ch.onclose = function () { self._rtcClean(to); };
     pc.createOffer()
       .then(function (offer) { return pc.setLocalDescription(offer); })
       .then(function () { self._sigWrite(to, self._sigPlain(pc.localDescription)); })
