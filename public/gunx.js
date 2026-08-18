@@ -37,15 +37,39 @@
       } catch (e) {
         throw new Error("GunX: gun not found — `npm install gun` (Node) or load gun.js first (browser).");
       }
+    }, function () {
+      try {
+        return require("./transports/direct_rtc.js");
+      } catch (e) {
+        return null;
+      }
+    }, function () {
+      try {
+        return require("./transports/nostr_bridge.js");
+      } catch (e) {
+        return null;
+      }
+    }, function () {
+      try {
+        return require("./utils/nostr_codec.js");
+      } catch (e) {
+        return null;
+      }
     });
   } else if (root.Gun) {
     root.GunX = factory(function () {
       return root.Gun;
+    }, function () {
+      return root.DirectRTC || null;
+    }, function () {
+      return root.GunXNostrBridge || null;
+    }, function () {
+      return root.GunXNostrCodec || null;
     });
   } else {
     console.error("GunX: Gun not found — load gun.js before gunx.js");
   }
-})(typeof self !== "undefined" ? self : globalThis, function (getGun) {
+})(typeof self !== "undefined" ? self : globalThis, function (getGun, getDirectRTC, getNostrBridge, getNostrCodec) {
   "use strict";
 
   var DEFAULT_PEERS = ["https://gunx.pages.dev/gun"];
@@ -113,6 +137,17 @@
     this._root = root;
     this._initStatus();
     if (this.refreshMs > 0) this._startRefresh();
+
+    // Phase 1: Direct WebRTC P2P (manual/QR air-gapped pairing) — the
+    // transport is a separate UMD module; this instance owns one of them.
+    var DirectRTC = getDirectRTC && getDirectRTC();
+    this.direct = DirectRTC ? new DirectRTC({ rtcConfig: this.rtcConfig }) : null;
+
+    // Phase 2: Nostr Relay Bridge (NIP-01) — created lazily via
+    // connectNostrRelay(); holds relay status + mirror state.
+    this._nostr = null;
+    this._nostrStatusCbs = [];
+    this._nostrDagCbs = [];
   }
 
   /* ── Namespacing ─────────────────────────────────────────────────── */
@@ -143,11 +178,114 @@
   /** Namespaced write helper: gunx.put('soul', data). */
   GunX.prototype.put = function (soul, data, cb) {
     var self = this;
-    return this.get(soul).put(data, function (ack) {
+    var ns = this.ns(soul);
+    var chain = this.get(soul).put(data, function (ack) {
       if (cb) cb(ack);
       // A round-tripped ack proves the relay connection is alive.
       if (ack && !ack.err) self._markConnected();
     });
+    // Phase 2: mirror flat writes into the Nostr mesh (Kind 30000).
+    this._mirrorToNostr(ns, data);
+    return chain;
+  };
+
+  /* ── Phase 2: Nostr Relay Bridge (NIP-01) ─────────────────────────── */
+
+  /**
+   * Connect to a Nostr relay and bridge gun state through it.
+   * opts: { secKeyHex, heartbeatMs, autoMirror (default true), since }
+   * Returns the underlying NostrBridge (also exposed as gunx._nostr).
+   */
+  GunX.prototype.connectNostrRelay = function (relayUrl, opts) {
+    opts = opts || {};
+    var NostrBridge = getNostrBridge && getNostrBridge();
+    var NostrCodec = getNostrCodec && getNostrCodec();
+    if (!NostrBridge || !NostrCodec) {
+      var msg = "GunX: Nostr bridge unavailable — load sdk/utils/nostr_codec.js and sdk/transports/nostr_bridge.js (or public/js/nostr_bridge.js) first.";
+      console.error(msg);
+      return null;
+    }
+    var self = this;
+    this.destroyNostr();
+    this._nostr = new NostrBridge({
+      relayUrl: relayUrl,
+      codec: NostrCodec,
+      appKey: this.appKey,
+      secKeyHex: opts.secKeyHex,
+      heartbeatMs: opts.heartbeatMs,
+      since: opts.since,
+    });
+    this._nostrAutoMirror = opts.autoMirror !== false;
+    this._nostr.on("status", function (s) { self._emitNostrStatus(s); });
+    this._nostr.on("dag", function (d) { self._ingestNostrDag(d); });
+    this._nostr.connect();
+    return this._nostr;
+  };
+
+  /** Live bridge status: { connected, relayUrl, activeSubs, eventsSent, eventsReceived }. */
+  Object.defineProperty(GunX.prototype, "nostrStatus", {
+    get: function () {
+      return this._nostr ? this._nostr.status : { connected: false, relayUrl: null, activeSubs: 0, eventsSent: 0, eventsReceived: 0, lastError: null };
+    },
+  });
+
+  /** Watch bridge status changes: cb(status). */
+  GunX.prototype.onNostrStatus = function (cb) {
+    if (typeof cb === "function") this._nostrStatusCbs.push(cb);
+    return this;
+  };
+
+  /** Watch incoming gun DAG messages from the Nostr mesh: cb({soul, wireMsg, pubkey}). */
+  GunX.prototype.onNostrDag = function (cb) {
+    if (typeof cb === "function") this._nostrDagCbs.push(cb);
+    return this;
+  };
+
+  GunX.prototype._emitNostrStatus = function (status) {
+    for (var i = 0; i < this._nostrStatusCbs.length; i++) {
+      try { this._nostrStatusCbs[i](status); } catch (e) {}
+    }
+  };
+
+  /**
+   * Mirror a flat-primitives write as a Kind 30000 event. Only flat
+   * values are mirrored (gun would split nested objects into child soul
+   * refs — flat payloads survive the wire unchanged).
+   */
+  GunX.prototype._mirrorToNostr = function (ns, data) {
+    if (!this._nostr || !this._nostrAutoMirror) return;
+    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+    var flat = true;
+    for (var k in data) {
+      var v = data[k];
+      if (v !== null && typeof v === "object") { flat = false; break; }
+    }
+    if (!flat) return;
+    this._nostr.publishDag(ns, {
+      "#": "gx" + Math.random().toString(36).slice(2, 10),
+      ">": {}, // LWW resolution handled by Nostr replaceable-event + gun merge
+      put: (function () { var o = {}; o[ns] = data; return o; })(),
+    });
+  };
+
+  /** Ingest a verified Nostr DAG message into the local gun graph. */
+  GunX.prototype._ingestNostrDag = function (d) {
+    for (var i = 0; i < this._nostrDagCbs.length; i++) {
+      try { this._nostrDagCbs[i](d); } catch (e) {}
+    }
+    if (!d || !d.wireMsg || !d.wireMsg.put || !d.soul) return;
+    var payload = d.wireMsg.put[d.soul];
+    if (!payload || typeof payload !== "object") return;
+    // Merge into the graph — gun's own LWW state check decides freshness.
+    try { this.gun.get(d.soul).put(payload); } catch (e) {}
+  };
+
+  /** Disconnect the Nostr bridge (also called by destroy()). */
+  GunX.prototype.destroyNostr = function () {
+    if (this._nostr) {
+      this._nostr.destroy();
+      this._nostr = null;
+    }
   };
 
   /* ── Auto-refresh (IndexedDB re-ask fix) ─────────────────────────── */
@@ -693,12 +831,72 @@
     });
   };
 
+  /* ── Phase 1: Direct WebRTC P2P (manual/QR air-gapped pairing) ─────
+   * Zero-server connectivity. No relay, no gun soul — two compact codes
+   * (copy-paste or QR) complete the handshake; bytes never leave the
+   * device-to-device DataChannel. Works fully offline.
+   * (Module: sdk/transports/direct_rtc.js)
+   */
+
+  /** Host: start a pairing → { code, peerId, expireAt, cancel }. */
+  GunX.prototype.createDirectCode = function (opts) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    return this.direct.createDirectCode(opts);
+  };
+
+  /** Joiner: consume an OFFER_CODE → { code (ANSWER_CODE), peerId, expireAt, cancel }. */
+  GunX.prototype.connectDirect = function (offerCode, opts) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    return this.direct.connectDirect(offerCode, opts);
+  };
+
+  /** Host: consume the ANSWER_CODE → { connected, peerId, authCode }. */
+  GunX.prototype.acceptDirectAnswer = function (answerCode) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    return this.direct.acceptDirectAnswer(answerCode);
+  };
+
+  /** Watch direct peers: cb(peerId, { status: 'connecting'|'connected'|'disconnected'|'expired', authCode }). */
+  GunX.prototype.onDirectPeer = function (cb) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    this.direct.on("peer", cb);
+    return this;
+  };
+
+  /** Receive direct messages: cb(peerId, msg). */
+  GunX.prototype.onDirectMessage = function (cb) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    this.direct.on("message", cb);
+    return this;
+  };
+
+  /** Receive completed direct files: cb({from, blob, name, size, type}). */
+  GunX.prototype.onDirectFile = function (cb) {
+    if (!this.direct) throw new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js");
+    this.direct.on("file", cb);
+    return this;
+  };
+
+  /** Send a message to a direct peer (string | object). Returns boolean. */
+  GunX.prototype.directSend = function (peerId, data) {
+    if (!this.direct) return false;
+    return this.direct.directSend(peerId, data);
+  };
+
+  /** Send a file over the direct channel. Returns Promise<{name, size, to}>. */
+  GunX.prototype.directShareFile = function (file, peerId, opts) {
+    if (!this.direct) return Promise.reject(new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js"));
+    return this.direct.directShareFile(file, peerId, opts);
+  };
+
   /* ── Teardown ────────────────────────────────────────────────────── */
 
   GunX.prototype.destroy = function () {
     this._destroyed = true;
     this.leavePresence();
     for (var k in this._rtc) this._rtcClean(k);
+    if (this.direct) this.direct.destroy();
+    this.destroyNostr();
     if (this._refreshTimer) clearInterval(this._refreshTimer);
     try {
       if (this._hi && this._hi.off) this._hi.off();

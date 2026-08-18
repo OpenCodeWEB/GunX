@@ -9,7 +9,13 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/sea.js"></script>
-<script src="/gunx.js"></script>
+<script src="/js/vendor/qrcode-generator.js?v=6"></script>
+<script src="/gunx.js?v=6"></script>
+<script src="/js/direct_rtc.js?v=6"></script>
+<script src="/js/direct_ui.js?v=6"></script>
+<script src="/js/nostr_codec.js?v=7"></script>
+<script src="/js/nostr_bridge.js?v=7"></script>
+<script type="module" src="/js/nostr_ui.js?v=7"></script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
@@ -36,6 +42,8 @@
     </div>
     <nav class="hidden md:flex items-center gap-6 text-sm font-medium text-slate-300">
       <a href="#playground" class="hover:text-teal-400 transition-colors">Playground</a>
+      <a href="#direct" class="hover:text-teal-400 transition-colors">Direct Pair</a>
+      <a href="#nostr" class="hover:text-violet-400 transition-colors">Nostr Mesh</a>
       <a href="#quickstart" class="hover:text-teal-400 transition-colors">Quickstart</a>
       <a href="#features" class="hover:text-teal-400 transition-colors">Features</a>
       <a href="https://github.com/OpenCodeWEB/GunX" target="_blank" class="hover:text-teal-400 transition-colors"><i class="fa-brands fa-github"></i> GitHub</a>
@@ -105,6 +113,125 @@
             <div class="flex justify-between"><dt class="text-slate-500">bytes</dt><dd id="stBytes">—</dd></div>
             <div class="flex justify-between"><dt class="text-slate-500">backend</dt><dd id="stBackend">—</dd></div>
           </dl>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Direct Pair (zero-server P2P) -->
+<section id="direct" class="max-w-6xl mx-auto px-4 py-10">
+  <div class="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 class="font-bold text-lg"><i class="fa-solid fa-bolt text-cyan-400 mr-2"></i>Direct Pair <span class="text-xs font-normal text-slate-500">— zero-server WebRTC</span></h2>
+      <span class="px-2 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 text-xs mono">no relay · no account · offline-capable</span>
+    </div>
+    <div class="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-slate-800">
+      <!-- HOST -->
+      <div class="p-6">
+        <h3 class="text-sm font-semibold text-slate-300 mb-3"><i class="fa-solid fa-tower-broadcast text-teal-400 mr-1"></i>Host a pairing</h3>
+        <button id="directCreateBtn" class="bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-4 py-2.5 rounded-lg text-sm hover:opacity-90 w-full">
+          <i class="fa-solid fa-qrcode mr-1"></i> Generate offer code
+        </button>
+        <p id="directOfferStatus" class="mt-2 text-xs text-slate-500 min-h-4"></p>
+        <div id="directCreateBox" hidden class="mt-3 space-y-3">
+          <div class="flex items-start gap-3">
+            <canvas id="directOfferQr" hidden width="180" height="180" class="rounded-lg border border-slate-700 bg-white p-1 shrink-0"></canvas>
+            <div class="flex-1">
+              <textarea id="directOfferCode" readonly rows="5" class="mono text-[11px] text-teal-200 bg-slate-950 border border-slate-800 rounded-lg p-2 w-full resize-none focus:outline-none focus:ring-1 focus:ring-teal-500/50"></textarea>
+              <button id="directOfferCopy" class="mt-1 text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"><i class="fa-regular fa-copy mr-1"></i>Copy</button>
+            </div>
+          </div>
+          <div id="directHostAnswerBox" hidden>
+            <label class="text-xs text-slate-400 block mb-1">Paste the ANSWER code from the other device</label>
+            <textarea id="directAnswerInput" rows="4" placeholder="GUNX1:…" class="mono text-[11px] bg-slate-950 border border-slate-800 rounded-lg p-2 w-full resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500/50 text-slate-200"></textarea>
+            <button id="directAcceptBtn" class="mt-2 bg-cyan-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:bg-cyan-500 w-full">Accept &amp; connect</button>
+          </div>
+        </div>
+      </div>
+      <!-- JOIN -->
+      <div class="p-6">
+        <h3 class="text-sm font-semibold text-slate-300 mb-3"><i class="fa-solid fa-plug text-cyan-400 mr-1"></i>Join a pairing</h3>
+        <label class="text-xs text-slate-400 block mb-1">Paste the OFFER code from the host (or scan its QR)</label>
+        <textarea id="directOfferInput" rows="4" placeholder="GUNX1:…" class="mono text-[11px] bg-slate-950 border border-slate-800 rounded-lg p-2 w-full resize-none focus:outline-none focus:ring-1 focus:ring-cyan-500/50 text-slate-200"></textarea>
+        <button id="directConnectBtn" class="mt-2 bg-cyan-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:bg-cyan-500 w-full">
+          <i class="fa-solid fa-link mr-1"></i> Connect
+        </button>
+        <p id="directJoinStatus" class="mt-2 text-xs text-slate-500 min-h-4"></p>
+        <div id="directJoinBox" hidden class="mt-3 space-y-3">
+          <div class="flex items-start gap-3">
+            <canvas id="directAnswerQr" hidden width="180" height="180" class="rounded-lg border border-slate-700 bg-white p-1 shrink-0"></canvas>
+            <div class="flex-1">
+              <textarea id="directAnswerCode" readonly rows="5" class="mono text-[11px] text-cyan-200 bg-slate-950 border border-slate-800 rounded-lg p-2 w-full resize-none focus:outline-none focus:ring-1 focus:ring-teal-500/50"></textarea>
+              <button id="directAnswerCopy" class="mt-1 text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300"><i class="fa-regular fa-copy mr-1"></i>Copy</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Session area -->
+    <div id="directSession" hidden class="border-t border-slate-800 p-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <div class="px-4 py-2 rounded-xl bg-slate-950 border border-teal-500/40">
+          <span class="text-[10px] uppercase tracking-wider text-slate-500 block">verify code — must match on both screens</span>
+          <span id="directSas" class="mono text-2xl font-bold text-teal-300">—</span>
+        </div>
+        <div class="text-xs text-slate-500 mono" id="directSasPeer"></div>
+      </div>
+      <div class="mt-4 flex gap-2">
+        <input id="directMsgInput" type="text" autocomplete="off" placeholder="Direct message — bytes never touch the relay…"
+          class="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/50">
+        <button id="directMsgSend" class="bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-4 py-2.5 rounded-lg text-sm hover:opacity-90">Send</button>
+        <button id="directFileSend" title="Send a file over the direct channel"
+          class="w-11 bg-slate-800 border border-slate-700 rounded-lg text-cyan-300 hover:bg-slate-700 shrink-0"><i class="fa-solid fa-paperclip"></i></button>
+        <input id="directFileInput" type="file" hidden>
+      </div>
+      <div id="directLog" class="mt-3 h-40 overflow-y-auto space-y-1.5 rounded-lg bg-slate-950/60 border border-slate-800 p-3"></div>
+      <p class="mt-2 text-xs text-slate-500">Open this page on two devices (or two tabs): generate on one, join from the other, swap the codes, then verify the SAS. Messages and files travel <span class="text-teal-400">only</span> between the two browsers — even with the relay offline.</p>
+    </div>
+  </div>
+</section>
+
+<!-- Nostr Mesh (public relay bridge) -->
+<section id="nostr" class="max-w-6xl mx-auto px-4 py-10">
+  <div class="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 class="font-bold text-lg"><i class="fa-solid fa-diagram-project text-violet-400 mr-2"></i>Nostr Mesh <span class="text-xs font-normal text-slate-500">— public relay bridge</span></h2>
+      <span class="px-2 py-1 rounded-full bg-violet-500/10 text-violet-400 border border-violet-500/20 text-xs mono">NIP-01 · Kind 30000 · no account</span>
+    </div>
+    <div class="grid md:grid-cols-3">
+      <div class="md:col-span-2 p-6">
+        <p class="text-sm text-slate-400">Bridge this playground through any public Nostr relay. Gun state is mirrored as
+          <span class="mono text-violet-300">Kind 30000</span> replaceable events signed with an ephemeral key — your chat data
+          stays <span class="text-violet-300">SEA-encrypted</span> inside the event content, and every incoming event is
+          Schnorr-verified before it touches the graph.</p>
+        <div class="mt-4 flex gap-2">
+          <input id="nostrUrlInput" type="text" value="wss://relay.damus.io" autocomplete="off" spellcheck="false"
+            class="flex-1 mono text-xs bg-slate-800 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-200 focus:outline-none focus:ring-2 focus:ring-violet-500/50">
+          <button id="nostrToggleBtn" class="bg-violet-600 hover:bg-violet-500 text-white font-semibold px-5 py-2.5 rounded-lg text-sm shrink-0">
+            <i class="fa-solid fa-link mr-1"></i> Connect to relay
+          </button>
+        </div>
+        <p class="mt-3 text-xs text-slate-500">Any public relay works (try <span class="mono">wss://relay.nostr.band</span>,
+          <span class="mono">wss://nostr.wine</span>). Open this page in two tabs, both connect to the same relay, and chat
+          messages sync through the Nostr mesh — independently of the GunX relay.</p>
+        <div id="nostrLog" class="mt-4 h-36 overflow-y-auto space-y-1 rounded-lg bg-slate-950/60 border border-slate-800 p-3"></div>
+      </div>
+      <div class="border-t md:border-t-0 md:border-l border-slate-800 p-6 bg-slate-950/40">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Bridge status</h3>
+        <span id="nostrStatusPill" class="px-3 py-1.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 mono text-xs"><i class="fa-solid fa-circle text-slate-500"></i> disconnected</span>
+        <dl class="mt-4 text-sm space-y-1 mono">
+          <div class="flex justify-between"><dt class="text-slate-500">activity</dt><dd><span id="nostrStatSent">sent 0</span> · <span id="nostrStatRecv">recv 0</span></dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">identity</dt><dd id="nostrStatKey" class="text-violet-300">key …</dd></div>
+        </dl>
+        <div class="mt-6 pt-4 border-t border-slate-800">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Why Nostr?</h3>
+          <ol class="text-sm text-slate-400 space-y-3 list-decimal list-inside">
+            <li><span class="mono text-violet-300">#d</span> tag = gun soul → replaceable per-soul state</li>
+            <li>Relay replays latest state to late joiners (LWW)</li>
+            <li>Kind 20000 heartbeat = peer discovery, no directory</li>
+            <li>Full audit trail: every event is verifiable forever</li>
+          </ol>
         </div>
       </div>
     </div>
@@ -196,6 +323,8 @@ gunx.put('todos', { hello: 'world' });</pre>
   "use strict";
   var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000, autoAccept: true });
   window.gunx = gunx; // debug/testing hook
+  initDirectUI(gunx);
+  if (window.initNostrUI) initNostrUI(gunx);
   var msgs = document.getElementById("messages");
   var form = document.getElementById("msgForm");
   var input = document.getElementById("msgInput");
@@ -272,7 +401,7 @@ gunx.put('todos', { hello: 'world' });</pre>
     }).catch(function () {});
   }, 5000);
 
-  /* ── Chat attachments: presence + image (imgbb proxy) + files (P2P WebRTC) ─ */
+  /* â”€â”€ Chat attachments: presence + image (imgbb proxy) + files (P2P WebRTC) â”€ */
   function esc(s) { return String(s).replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
 
   gunx.joinPresence({ name: "visitor-" + Math.random().toString(36).slice(2, 6) });
@@ -307,7 +436,7 @@ gunx.put('todos', { hello: 'world' });</pre>
       if (dt > 0 && dd >= 0) speed = " " + fmtSpeed(dd / (dt / 1000));
       lastProg.t = p.ts; lastProg.sent = done;
     }
-    setXfer((dir === "sending" ? "↑" : "↓") + " " + (p.name || "file") + " " + pct + "% (" + fmt(done) + "B / " + fmt(p.total) + "B)" + speed);
+    setXfer((dir === "sending" ? "â†‘" : "â†“") + " " + (p.name || "file") + " " + pct + "% (" + fmt(done) + "B / " + fmt(p.total) + "B)" + speed);
   });
 
   function chatMsg(t, img, fname, fsize) {
@@ -333,7 +462,7 @@ gunx.put('todos', { hello: 'world' });</pre>
     document.getElementById("messages").appendChild(a);
   });
 
-  /* Image → imgbb via server-side proxy → chat message */
+  /* Image â†’ imgbb via server-side proxy â†’ chat message */
   document.getElementById("imgBtn").addEventListener("click", function () {
     document.getElementById("imgInput").click();
   });
@@ -350,7 +479,7 @@ gunx.put('todos', { hello: 'world' });</pre>
     });
   });
 
-  /* File → P2P WebRTC to all online peers → chat message */
+  /* File â†’ P2P WebRTC to all online peers â†’ chat message */
   document.getElementById("fileBtn").addEventListener("click", function () {
     document.getElementById("fileInput").click();
   });
