@@ -1,4 +1,4 @@
-// Live E2E against the deployed .gunx + .absup registry API (main.gunx.pages.dev).
+// Live E2E against the deployed .gunx + .absup registry API (gunx.pages.dev).
 const Gun = require("gun");
 globalThis.Gun = Gun;
 const SEA = require("gun/sea.js");
@@ -6,7 +6,7 @@ const PoW = require("../sdk/tld/pow.js");
 const powMine = PoW.mine;
 const getDifficulty = PoW.getDifficulty;
 
-const API = "https://main.gunx.pages.dev/api/domain";
+const API = "https://gunx.pages.dev/api/domain";
 const results = [];
 function check(label, cond, extra) {
   results.push({ label, ok: !!cond, extra });

@@ -13,7 +13,7 @@
 - Worker: `npx wrangler deploy` (workdir `worker/`) — hosts DO classes `GunPeerObject`, `DomainRegistryObject`
 - Pages: `npx wrangler pages deploy public --project-name gunx --branch main` (repo root)
 - **Pages limitations**: no `migrations` in Pages wrangler.toml; DO bindings need `script_name`; Pages bindings propagate slowly after deploy (1101 → OK later)
-- After deploy, verify live: `test/e2e_live.cjs` + browser E2E on `main.gunx.pages.dev`
+- After deploy, verify live: `test/e2e_live.cjs` + browser E2E on `gunx.pages.dev`
 
 ## Commit Convention
 `feat: <scope> — <summary>` (matches repo history: `c1c0d6c`, `671c903`)

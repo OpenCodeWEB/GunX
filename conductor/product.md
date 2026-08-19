@@ -31,6 +31,6 @@ An open-source, decentralized domain registry ("DoMain") on Cloudflare Workers/P
 
 ## Key Addresses
 - Registry DO: Worker `gunx-do` (`https://gunx-do.xup.workers.dev`), class `DomainRegistryObject`; Pages binding `DOMAIN_REGISTRY` (script_name `gunx-do`)
-- Pages: `main.gunx.pages.dev` (project `gunx`)
+- Pages: `gunx.pages.dev` (project `gunx`)
 - ABsUP wallet: `0x9016a472c308A4e87bed705D066636Adf625D1B0`
 - $absup coin: `0x666437f3dd51cdab4a5ded38427bfa705049ee5a` (Base, Zora creator coin)
