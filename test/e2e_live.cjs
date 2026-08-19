@@ -3,10 +3,39 @@ const Gun = require("gun");
 globalThis.Gun = Gun;
 const SEA = require("gun/sea.js");
 const PoW = require("../sdk/tld/pow.js");
+const crypto = require("crypto");
 const powMine = PoW.mine;
 const getDifficulty = PoW.getDifficulty;
 
 const API = "https://gunx.pages.dev/api/domain";
+
+const B32 = "abcdefghijklmnopqrstuvwxyz234567";
+
+/** Tor v3 address from 32-byte pubkey — same algorithm as worker/src/onion.js. */
+function makeV3Onion(pubkey) {
+  const prefix = Buffer.from(".onion checksum");
+  const pre = Buffer.concat([prefix, pubkey, Buffer.from([3])]);
+  const digest = crypto.createHash("sha3-256").update(pre).digest();
+  const payload = Buffer.concat([pubkey, digest.subarray(0, 2), Buffer.from([3])]);
+  let out = "";
+  let bits = 0;
+  let value = 0;
+  for (const b of payload) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += B32[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += B32[(value << (5 - bits)) & 31];
+  return out;
+}
+
+/** Deterministic 32-byte ed25519 pubkey -> valid Tor v3 target (per name). */
+function onionTargetFor(name) {
+  return makeV3Onion(crypto.createHash("sha256").update("onion:" + name).digest());
+}
 const results = [];
 function check(label, cond, extra) {
   results.push({ label, ok: !!cond, extra });
@@ -130,10 +159,10 @@ function check(label, cond, extra) {
   json = await res.json();
   check("stats total >= 1 + byTld", res.status === 200 && json.stats && json.stats.total >= 1 && json.stats.byTld && typeof json.stats.byTld.gunx === "number", json.stats);
 
-  // 12. .ONION mint — public, PoW-gated, unlimited (non-root key succeeds)
+  // 12. .ONION mint — public, PoW-gated, unlimited, REAL Tor v3 target (non-root key succeeds)
   const onionName = "onione2e" + Math.random().toString(36).slice(2, 6);
   const onionTs = Date.now();
-  const onionTarget = "gateway";
+  const onionTarget = onionTargetFor(onionName); // valid 56-char v3 address
   const onionDiff = getDifficulty(onionName);
   const onionMine = await powMine(onionName, ownerPub, onionTarget, onionTs, onionDiff);
   const onionClaim = { tld: "onion", name: onionName, ownerPub, target: onionTarget, ts: onionTs, nonce: onionMine.nonce, diff: onionDiff, hash: onionMine.hash };
@@ -144,12 +173,12 @@ function check(label, cond, extra) {
     body: JSON.stringify(onionClaim),
   });
   json = await res.json();
-  check("onion mint accepted (201, non-root)", res.status === 201 && json.ok && json.record.tld === "onion" && json.record.status === "active", json.ok ? json.record : json.error);
+  check("onion mint accepted (201, non-root, v3 target)", res.status === 201 && json.ok && json.record.tld === "onion" && json.record.status === "active" && json.record.onion && json.record.onion.v3 === true, json.ok ? { target: onionTarget.slice(0, 12) + "…", onion: json.record.onion } : json.error);
 
-  // 13. .ONION resolve + list shows it
+  // 13. .ONION resolve returns record + Tor routing URL + list shows it
   res = await fetch(API + "/resolve?name=" + encodeURIComponent(onionName) + "&tld=onion");
   json = await res.json();
-  check("onion resolve returns record", res.status === 200 && json.record && json.record.tld === "onion", json.record && { target: json.record.target, tld: json.record.tld });
+  check("onion resolve returns record + tor url", res.status === 200 && json.record && json.record.tld === "onion" && json.url === "http://" + onionTarget + ".onion/" && json.transport === "tor", json.record && { target: json.record.target.slice(0, 12) + "…", url: json.url, transport: json.transport });
   res = await fetch(API + "/list?owner=" + encodeURIComponent(ownerPub));
   json = await res.json();
   check("onion appears in owner list", res.status === 200 && json.domains && json.domains.some(d => d.name === onionName && d.tld === "onion"), json.domains && json.domains.map(d => d.name + "." + d.tld));
@@ -166,7 +195,7 @@ function check(label, cond, extra) {
   check("onion gift accepted", res.status === 200 && json.ok && json.record.ownerPub === newOwner.pub, json.ok ? json.record.ownerPub.slice(0, 10) : json.error);
 
   // 15. .ONION without PoW must be rejected (public TLD → PoW required)
-  const noPowClaim = { tld: "onion", name: "nopow" + Math.random().toString(36).slice(2, 6), ownerPub, target: "x", ts: Date.now(), nonce: 0, diff: 0, hash: "" };
+  const noPowClaim = { tld: "onion", name: "nopow" + Math.random().toString(36).slice(2, 6), ownerPub, target: onionTargetFor("nopow"), ts: Date.now(), nonce: 0, diff: 0, hash: "" };
   noPowClaim.sig = await SEA.sign(noPowClaim, { pub: pair.pub, priv: pair.priv });
   res = await fetch(API + "/claim", {
     method: "POST",
@@ -176,6 +205,21 @@ function check(label, cond, extra) {
   json = await res.json();
   check("onion mint without PoW rejected (400)", res.status === 400, json);
 
+  // 15b. .ONION with non-v3 target rejected even with PoW
+  const badTarget = "gateway";
+  const badTs = Date.now();
+  const badDiff = getDifficulty(onionName + "x");
+  const badMine = await powMine(onionName + "x", ownerPub, badTarget, badTs, badDiff);
+  const badClaim = { tld: "onion", name: onionName + "x", ownerPub, target: badTarget, ts: badTs, nonce: badMine.nonce, diff: badDiff, hash: badMine.hash };
+  badClaim.sig = await SEA.sign(badClaim, { pub: pair.pub, priv: pair.priv });
+  res = await fetch(API + "/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(badClaim),
+  });
+  json = await res.json();
+  check("onion non-v3 target rejected (400)", res.status === 400 && /onion v3/i.test(json.error || ""), json);
+
   // 16. STATS byTld includes onion
   res = await fetch(API + "/stats");
   json = await res.json();
@@ -183,6 +227,6 @@ function check(label, cond, extra) {
 
   const failed = results.filter(r => !r.ok);
   console.log("\n" + (failed.length === 0 ? "ALL LIVE E2E PASS (" + results.length + ")" : failed.length + " FAILED") + " — owner=" + ownerPub);
-  console.log("claimed:", name + ".gunx ->", target, "| onion:", onionName + ".onion ->", onionTarget, "| gifted to", newOwner.pub.slice(0, 10) + "...");
+  console.log("claimed:", name + ".gunx ->", target, "| onion:", onionName + ".onion ->", onionTarget.slice(0, 12) + "...", "| gifted to", newOwner.pub.slice(0, 10) + "...");
   process.exit(failed.length === 0 ? 0 : 1);
 })().catch(e => { console.error("E2E error:", e); process.exit(1); });

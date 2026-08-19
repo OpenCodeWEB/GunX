@@ -25,6 +25,7 @@ import {
   getDifficulty,
   hashInput,
 } from "../worker/src/verify_claim.js";
+import { makeV3Onion, validateV3Onion, normalizeV3Onion, base32 } from "../worker/src/onion.js";
 import {
   tierFor,
   priceFor,
@@ -415,7 +416,51 @@ test("migration: legacy domain:<name> keys re-key to domain:gunx:<name>", async 
   assert.equal(data.record.tld, "gunx");
 });
 
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• Tor v3 onion (Track tor-onion) â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+
+test("onion: sha3-256 matches NIST known vectors (via @noble/hashes)", async () => {
+  const { sha3_256 } = await import("../worker/src/onion.js");
+  const hex = (b) => Array.from(b).map((x) => x.toString(16).padStart(2, "0")).join("");
+  assert.equal(
+    hex(sha3_256(new Uint8Array(0))),
+    "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
+  );
+  assert.equal(
+    hex(sha3_256(new TextEncoder().encode("abc"))),
+    "3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532",
+  );
+});
+
+test("onion: makeV3Onion -> validateV3Onion round-trip, .onion suffix ok", () => {
+  const p = new Uint8Array(32).fill(7);
+  const addr = makeV3Onion(p);
+  assert.equal(addr.length, 56);
+  assert.match(addr, /^[a-z2-7]{56}$/);
+  assert.equal(validateV3Onion(addr), true);
+  assert.equal(validateV3Onion(addr + ".onion"), true);
+  assert.equal(normalizeV3Onion(addr + ".onion"), addr);
+  assert.equal(normalizeV3Onion(addr), addr);
+});
+
+test("onion: bad addresses rejected (length / alphabet / checksum)", () => {
+  const p = new Uint8Array(32).fill(7);
+  const addr = makeV3Onion(p);
+  assert.equal(validateV3Onion(""), false);
+  assert.equal(validateV3Onion("abc"), false); // too short
+  assert.equal(validateV3Onion("0".repeat(56)), false); // 0,1,8,9 not in alphabet
+  assert.equal(validateV3Onion("a".repeat(56)), false); // checksum invalid
+  assert.equal(validateV3Onion(addr.toUpperCase()), true); // case-insensitive
+  const flipped = addr.slice(0, -1) + (addr[55] === "a" ? "b" : "a");
+  assert.equal(validateV3Onion(flipped), false); // checksum breaks
+});
+
 /* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• Phase A: .onion unlimited TLD â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+
+/** Deterministic 32-byte ed25519 pubkey -> valid v3 onion target (per name). */
+async function onionTargetFor(name) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("onion:" + name));
+  return makeV3Onion(new Uint8Array(digest));
+}
 
 test("onion: TLD registered in policy list", () => {
   assert.ok(TLDS.includes("onion"));
@@ -457,7 +502,7 @@ test("onion: verifyClaim requires PoW like .gunx (no absup-style bypass)", async
   assert.equal(ok.ok, true);
 });
 
-test("onion: DO fetch path â€” non-root mint succeeds with PoW, stats byTld", async () => {
+test("onion: DO rejects non-v3 target (400) even with valid PoW+SEA", async () => {
   const mod = await import("../worker/src/DomainRegistryDO.js");
   const { DomainRegistryObject } = mod;
 
@@ -478,8 +523,46 @@ test("onion: DO fetch path â€” non-root mint succeeds with PoW, stats byTld
   await doInst.initialized;
 
   const ts = Date.now();
-  const mine = await PoW.mine("myonions", alicePair.pub, "node-abc", ts, 2);
-  const claim = { tld: "onion", name: "myonions", ownerPub: alicePair.pub, target: "node-abc", ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
+  const mine = await PoW.mine("badonion", alicePair.pub, "not-an-onion", ts, 2);
+  const claim = { tld: "onion", name: "badonion", ownerPub: alicePair.pub, target: "not-an-onion", ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
+  claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
+
+  const res = await doInst.fetch(
+    new Request("https://do.local/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(claim),
+    }),
+  );
+  assert.equal(res.status, 400);
+  const data = await res.json();
+  assert.match(data.error, /onion v3/i);
+});
+
+test("onion: DO mint with real v3 target -> 201 + onion.v3 metadata + resolve gives tor url", async () => {
+  const mod = await import("../worker/src/DomainRegistryDO.js");
+  const { DomainRegistryObject } = mod;
+
+  const store = new Map();
+  const state = {
+    storage: {
+      get: async (k) => store.get(k),
+      put: async (k, v) => store.set(k, v),
+      delete: async (k) => store.delete(k),
+      list: async ({ prefix }) => {
+        const entries = [...store.entries()].filter(([k]) => k.startsWith(prefix));
+        return { entries: () => entries, list_complete: true };
+      },
+      setAlarm: async () => {},
+    },
+  };
+  const doInst = new DomainRegistryObject(state, { ROOT_PUBKEYS: "" });
+  await doInst.initialized;
+
+  const target = await onionTargetFor("myonions");
+  const ts = Date.now();
+  const mine = await PoW.mine("myonions", alicePair.pub, target, ts, 2);
+  const claim = { tld: "onion", name: "myonions", ownerPub: alicePair.pub, target, ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
   claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
 
   const res = await doInst.fetch(
@@ -495,14 +578,24 @@ test("onion: DO fetch path â€” non-root mint succeeds with PoW, stats byTld
   assert.equal(data.record.tld, "onion");
   assert.equal(data.record.status, "active");
   assert.equal(data.record.source, "public");
+  assert.equal(data.record.onion.v3, true);
+  assert.equal(data.record.onion.address, target);
 
   const statsRes = await doInst.fetch(new Request("https://do.local/stats"));
   const s = await statsRes.json();
   assert.equal(s.stats.byTld.onion, 1);
   assert.ok(s.policy.tlDs.includes("onion"));
+
+  // Tor routing: resolve exposes the .onion URL + transport hint
+  const resRes = await doInst.fetch(new Request("https://do.local/resolve?name=myonions&tld=onion"));
+  const rdata = await resRes.json();
+  assert.equal(rdata.ok, true);
+  assert.equal(rdata.url, "http://" + target + ".onion/");
+  assert.equal(rdata.transport, "tor");
+  assert.ok(rdata.hint.includes("Tor Browser"));
 });
 
-test("onion: gift transfer works via DO /transfer", async () => {
+test("onion: gift transfer works via DO /transfer (v3 target)", async () => {
   const mod = await import("../worker/src/DomainRegistryDO.js");
   const { DomainRegistryObject } = mod;
 
@@ -522,9 +615,10 @@ test("onion: gift transfer works via DO /transfer", async () => {
   const doInst = new DomainRegistryObject(state, { ROOT_PUBKEYS: "" });
   await doInst.initialized;
 
+  const target = await onionTargetFor("giftname");
   const ts = Date.now();
-  const mine = await PoW.mine("giftname", alicePair.pub, "node-abc", ts, 2);
-  const claim = { tld: "onion", name: "giftname", ownerPub: alicePair.pub, target: "node-abc", ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
+  const mine = await PoW.mine("giftname", alicePair.pub, target, ts, 2);
+  const claim = { tld: "onion", name: "giftname", ownerPub: alicePair.pub, target, ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
   claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
   const mintRes = await doInst.fetch(
     new Request("https://do.local/claim", {

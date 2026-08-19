@@ -41,6 +41,15 @@
     return sel ? sel.value : "gunx";
   }
 
+  /** Client-side Tor v3 validation (mirrors worker/src/onion.js — no SHA3 needed here). */
+  function isV3OnionTarget(s) {
+    if (!s) return false;
+    var a = String(s).trim().toLowerCase();
+    if (a.endsWith(".onion")) a = a.slice(0, -6);
+    // format check only (a-z2-7, 56 chars); full checksum is verified server-side
+    return /^[a-z2-7]{56}$/.test(a);
+  }
+
   /** fetch web3.bio universal profile through our proxy. */
   async function w3bProfile(identity) {
     try {
@@ -119,12 +128,14 @@
           hint.className = "text-[11px] text-teal-400";
           $("tldClaimBtn").className = "bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90";
         } else if (tld === "onion") {
-          hint.textContent = "unlimited — no count limit, mint as many as you want (PoW only)";
+          hint.textContent = "Tor technology — target MUST be a real Tor v3 address (56-char, a-z2-7); opens through Tor Browser";
           hint.className = "text-[11px] text-purple-400";
+          $("tldTargetInput").placeholder = "56-char v3 onion address (e.g. …abcdef.onion)";
           $("tldClaimBtn").className = "bg-gradient-to-r from-purple-500 to-fuchsia-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90";
         } else {
           hint.textContent = "";
           hint.className = "text-[11px] text-slate-500";
+          $("tldTargetInput").placeholder = "target (node id / site / .onion…)";
           $("tldClaimBtn").className = "bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90";
         }
       });
@@ -140,6 +151,10 @@
         return;
       }
       if (!pair) { log("tldLog", "generate an identity first", false); return; }
+      if (tld === "onion" && !isV3OnionTarget(target)) {
+        log("tldLog", ".onion target must be a real Tor v3 address — 56 chars, a-z2-7 (optionally + .onion)", false);
+        return;
+      }
       $("tldClaimBtn").disabled = true;
       try {
         var claim = { tld: tld, name: name, ownerPub: pair.pub, target: target, ts: Date.now() };
@@ -183,11 +198,16 @@
         if (data.ok && data.record) {
           var r = data.record;
           var tld = r.tld || "gunx";
+          var torLink = data.url
+            ? '<div class="flex items-center gap-2 mt-1 flex-wrap"><span class="text-[10px] text-purple-400">Tor transport:</span>' +
+              '<a href="' + esc(data.url) + '" target="_blank" rel="noopener" class="text-[10px] mono text-purple-300 hover:underline break-all">' + esc(data.url) + "</a></div>"
+            : "";
           card.classList.remove("hidden");
           card.innerHTML =
             '<div class="flex items-center justify-between gap-2 flex-wrap"><span class="text-teal-300 font-semibold">' + esc(name) + "." + tld + "</span>" +
             '<span class="text-slate-500">' + r.tier + " [" + r.status + "] · uses " + ((r.resolves || 0) + (r.touches || 0)) + "</span></div>" +
             '<div class="text-slate-400 truncate mt-1">target: ' + esc(r.target) + "</div>" +
+            torLink +
             '<div class="text-slate-500 truncate">owner: <span class="mono">' + esc(r.ownerPub.slice(0, 20)) + "…</span> · 33% royalty → " + esc((r.beneficiary || "ABsUP").slice(0, 12)) + "…</div>" +
             '<div id="tldResolveProfile" class="flex items-center gap-2 mt-2"></div>';
           log("tldLog", name + "." + (r.tld || "gunx") + " → owner " + r.ownerPub.slice(0, 16) + "… · target " + r.target +

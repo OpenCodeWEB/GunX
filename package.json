@@ -11,5 +11,8 @@
   "devDependencies": {
     "gun": "^0.2020.1241",
     "wrangler": "^4.118.0"
+  },
+  "dependencies": {
+    "@noble/hashes": "^2.3.0"
   }
 }

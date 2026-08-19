@@ -22,6 +22,7 @@
  */
 
 import { verifyClaim, verifySeaSig, claimBody } from "./verify_claim.js";
+import { validateV3Onion, normalizeV3Onion } from "./onion.js";
 
 export const BASE_PRICE = 1; // ABS units — Phase 4 wallet integration replaces this
 export const FREE_DOMAINS_PER_OWNER = 3;
@@ -340,9 +341,22 @@ export class DomainRegistryObject {
     const isRoot = this.rootPubkeys().has(body.ownerPub);
 
     // .absup is owner-only: only the ABsUP root key can mint.
-    // .onion is fully public — anyone can mint (unlimited, PoW-gated).
+    // .onion is fully public — anyone can mint (unlimited, PoW-gated), but
+    // the target MUST be a real Tor v3 onion address (Tor technology track).
     if (tld === "absup" && !isRoot) {
       return json({ error: ".absup is ABsUP-owned — minted by the root key or gifted" }, 403);
+    }
+
+    // .onion targets must be genuine Tor v3 addresses (56-char base32 +
+    // SHA3-256 checksum + version byte). PoW is still required below.
+    if (tld === "onion") {
+      const target = String(body.target || "");
+      if (!validateV3Onion(target)) {
+        return json(
+          { error: "invalid onion v3 address — target must be a 56-char Tor v3 address (a-z2-7)" },
+          400,
+        );
+      }
     }
 
     // 1. cryptographic verification (PoW + SEA). .absup root mints are
@@ -395,6 +409,10 @@ export class DomainRegistryObject {
       claimedAt: Date.now(),
       lastActiveAt: Date.now(),
     };
+    // Tor technology: normalized v3 address + self-authenticating identity flag
+    if (tld === "onion") {
+      record.onion = { v3: true, address: normalizeV3Onion(record.target) };
+    }
 
     await Promise.all([
       this.state.storage.put(this.keyFor(tld, name), record),
@@ -486,7 +504,16 @@ export class DomainRegistryObject {
       record.resolves = (record.resolves || 0) + 1;
       await this.state.storage.put(this.keyFor(tt, String(name).toLowerCase()), record);
     }
-    return json({ ok: true, record });
+    // Tor routing (Level B): .onion records expose the direct hidden-service
+    // URL — Tor Browser opens it through the Tor network. Workers cannot
+    // build Tor circuits (no TCP), so the browser is the Tor transport.
+    const out = { ok: true, record };
+    if (tt === "onion" && typeof record.target === "string") {
+      out.url = `http://${record.target.toLowerCase().replace(/\.onion$/, "")}.onion/`;
+      out.transport = "tor";
+      out.hint = "open this URL in Tor Browser — traffic rides the Tor network";
+    }
+    return json(out);
   }
 
   async handleList(owner) {
