@@ -10,11 +10,12 @@
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/sea.js"></script>
 <script src="/js/vendor/qrcode-generator.js?v=6"></script>
-<script src="/gunx.js?v=6"></script>
+<script src="/gunx.js?v=8"></script>
 <script src="/js/direct_rtc.js?v=6"></script>
 <script src="/js/direct_ui.js?v=6"></script>
 <script src="/js/nostr_codec.js?v=7"></script>
 <script src="/js/nostr_bridge.js?v=7"></script>
+<script src="/js/rooms.js?v=8"></script>
 <script type="module" src="/js/nostr_ui.js?v=7"></script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -73,10 +74,13 @@
   <div class="rounded-2xl border border-slate-800 bg-slate-900/60 glow overflow-hidden">
     <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
       <h2 class="font-bold text-lg"><i class="fa-solid fa-tower-broadcast text-teal-400 mr-2"></i>Live P2P playground</h2>
-      <div class="flex items-center gap-2 text-xs text-slate-400 mono">
-        <span>room: gunx-playground/chat</span>
+      <div class="flex items-center gap-2 text-xs text-slate-400 mono flex-wrap">
+        <span id="roomPill" class="px-2 py-1 rounded bg-slate-800 text-teal-300" title="Current chat room">room: public</span>
+        <span id="roomLockPill" class="px-2 py-1 rounded bg-slate-800 text-slate-500 hidden" title="Private room — only people with the invite key can read">🔒 e2e</span>
         <span id="onlinePill" class="px-2 py-1 rounded bg-slate-800 text-slate-400" title="Peers online (same page open in another tab)">0 online</span>
-        <button id="clearBtn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">clear</button>
+        <button id="newRoomBtn" class="px-2 py-1 rounded bg-violet-800/60 hover:bg-violet-700/60 text-violet-200" title="Create a private E2E room">new private</button>
+        <button id="joinRoomBtn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300" title="Paste a private room invite link">join</button>
+        <button id="clearBtn" class="px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300" title="Clears only your local view — nothing is deleted from the relay">clear view</button>
       </div>
     </div>
     <div class="grid md:grid-cols-3">
@@ -321,18 +325,29 @@ gunx.put('todos', { hello: 'world' });</pre>
 <script>
 (function () {
   "use strict";
-  var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000, autoAccept: true });
+var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000, autoAccept: true });
   window.gunx = gunx; // debug/testing hook
   initDirectUI(gunx);
   if (window.initNostrUI) initNostrUI(gunx);
+  var rooms = new GunXRooms();
   var msgs = document.getElementById("messages");
   var form = document.getElementById("msgForm");
   var input = document.getElementById("msgInput");
+  var roomPill = document.getElementById("roomPill");
+  var roomLockPill = document.getElementById("roomLockPill");
+  var roomSub = null;
 
-  function addMsg(text, mine, img, fname, fsize) {
+  function addMsg(text, mine, img, fname, fsize, locked) {
     var div = document.createElement("div");
     div.className = "msg-in flex " + (mine ? "justify-end" : "justify-start");
     var extra = "";
+    if (locked) {
+      div.innerHTML = '<span class="max-w-[80%] px-3 py-2 rounded-2xl text-sm break-words bg-slate-800/60 border border-slate-700 text-slate-500">' +
+        '<i class="fa-solid fa-lock mr-1"></i>encrypted — join with the room invite key</span>';
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+      return;
+    }
     if (img) {
       extra += '<a href="' + img + '" target="_blank" rel="noopener"><img src="' + img +
         '" class="mt-2 max-h-48 rounded-lg border border-slate-700 object-cover" alt=""></a>';
@@ -350,29 +365,75 @@ gunx.put('todos', { hello: 'world' });</pre>
     msgs.scrollTop = msgs.scrollHeight;
   }
 
-  gunx.get("chat").map().on(function (data, key) {
-    if (!data || typeof data.t !== "string") return;
-    // de-dup: the relay may re-emit existing fields on merge
-    if (document.getElementById("m-" + key)) return;
-    addMsg(data.t, false, data.img, data.fname, data.fsize);
-    var marker = document.createElement("span");
-    marker.id = "m-" + key;
-    marker.style.display = "none";
-    document.body.appendChild(marker);
-  });
+  function updateRoomPill() {
+    roomPill.textContent = "room: " + rooms.name;
+    if (rooms.private) roomLockPill.classList.remove("hidden");
+    else roomLockPill.classList.add("hidden");
+    msgs.innerHTML = "";
+  }
+
+  function subscribeRoom() {
+    if (roomSub) roomSub.off();
+    var root = rooms.private ? "room/" + rooms.roomId : "chat";
+    roomSub = gunx.get(root).map().on(function (data, key) {
+      if (!data || typeof data !== "object") return;
+      if (document.getElementById("m-" + key)) return;
+      var marker = document.createElement("span");
+      marker.id = "m-" + key;
+      marker.style.display = "none";
+      msgs.appendChild(marker);
+      rooms.open(gunx, data).then(function (msg) {
+        if (msg.locked) { addMsg("", false, null, null, null, true); return; }
+        addMsg(msg.text, msg.from === "local", null, null, null);
+      });
+    });
+  }
 
   form.addEventListener("submit", function (e) {
     e.preventDefault();
     var t = input.value.trim();
     if (!t) return;
-    gunx.put("chat/" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), { t: t, from: "local" });
-    addMsg(t, true);
+    var mine = true;
+    rooms.send(gunx, t).then(function () {
+      addMsg(t, mine);
+    }).catch(function (err) {
+      addMsg("[send failed] " + (err && err.message ? err.message : err), true);
+    });
     input.value = "";
   });
 
   document.getElementById("clearBtn").addEventListener("click", function () {
+    // Safety: "clear view" never touches relay data — only this tab's DOM.
+    if (!confirm("This only clears your local view on this tab. Nothing is deleted from the GunX relay — chat data stays forever.")) return;
     msgs.innerHTML = "";
   });
+
+  document.getElementById("newRoomBtn").addEventListener("click", function () {
+    rooms.createPrivate(gunx.sea).then(function (invite) {
+      if (rooms.private && roomSub) { rooms.roomId = invite.roomId; rooms.roomKey = invite.key; rooms.name = "private/" + invite.roomId; updateRoomPill(); subscribeRoom(); }
+      else { rooms.roomId = invite.roomId; rooms.roomKey = invite.key; rooms.private = true; rooms.name = "private/" + invite.roomId; updateRoomPill(); subscribeRoom(); }
+      rooms.copyInvite(invite.url);
+      history.replaceState(null, "", "#r=" + encodeURIComponent(invite.roomId) + "&k=" + encodeURIComponent(btoa(invite.key).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")));
+    });
+  });
+
+  document.getElementById("joinRoomBtn").addEventListener("click", function () {
+    var url = prompt("Paste a private room invite link (contains the decryption key):");
+    if (!url) return;
+    var m = url.match(/[#?]r=([^&]+)&k=([^&]+)/);
+    if (!m) { alert("Not a valid GunX private room link."); return; }
+    rooms.roomId = decodeURIComponent(m[1]);
+    try { rooms.roomKey = atob(decodeURIComponent(m[2]).replace(/-/g, "+").replace(/_/g, "/")); }
+    catch (e) { alert("Invalid key in invite link."); return; }
+    rooms.private = true;
+    rooms.name = "private/" + rooms.roomId;
+    updateRoomPill();
+    subscribeRoom();
+    history.replaceState(null, "", "#r=" + encodeURIComponent(rooms.roomId) + "&k=" + encodeURIComponent(btoa(rooms.roomKey).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "")));
+  });
+
+  updateRoomPill();
+subscribeRoom();
 
   /* status + stats pills */
   gunx.on("status", function (s) {

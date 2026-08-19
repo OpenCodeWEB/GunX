@@ -38,6 +38,18 @@ const SECURITY_HEADERS = {
 /** Hard ceiling per wire message (bytes) — public fairness cap. */
 const MAX_MESSAGE_BYTES = 1024 * 1024; // 1 MB
 
+/**
+ * Retention policy — "99 days 9 hours 9 minutes 9 seconds".
+ *
+ * The relay NEVER deletes live data. Only *obsolete* data is ever pruned:
+ * fields that were explicitly tombstoned (gun null-put / `unset`) and whose
+ * write state is older than the retention window. Live chat, profiles, and
+ * any non-null payload are retained forever, no matter how old they are.
+ */
+const PRUNE_TTL_MS = 99 * 86400000 + 9 * 3600000 + 9 * 60000 + 9000; // 8,586,549,000 ms
+export { PRUNE_TTL_MS };
+const PRUNE_INTERVAL_MS = 24 * 3600000; // sweep once a day via DO alarm
+
 function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
@@ -180,6 +192,32 @@ class RateLimiter {
   }
 }
 
+/**
+ * Pure retention decision for a single stored node (unit-testable).
+ *
+ * Returns:
+ *   { dead: [], action: null }          — nothing obsolete
+ *   { dead: [...], action: "delete" }   — every field tombstoned → remove soul
+ *   { dead: [...], action: "keep", next } — drop dead fields, keep live ones
+ */
+export function pruneNode(node, cutoff) {
+  if (!node || typeof node !== "object") return { dead: [], action: null };
+  const states = node._?.[">"] || {};
+  const fields = Object.keys(node).filter((f) => f !== "_");
+  const dead = fields.filter(
+    (f) => node[f] === null && typeof states[f] === "number" && states[f] < cutoff,
+  );
+  if (!dead.length) return { dead: [], action: null };
+  if (dead.length === fields.length) return { dead, action: "delete" };
+  const next = { ...node };
+  next._ = { "#": node._?.["#"], ">": { ...states } };
+  for (const f of dead) {
+    delete next[f];
+    delete next._[">"][f];
+  }
+  return { dead, action: "keep", next };
+}
+
 export class GunPeerObject {
   constructor(state, env) {
     this.state = state;
@@ -224,6 +262,58 @@ export class GunPeerObject {
         await this.persistStats();
       }
     }
+    // Retention sweep: schedule the first prune one day out (DO alarm).
+    await this.schedulePrune();
+  }
+
+  /** Next retention sweep exactly PRUNE_INTERVAL_MS from now. */
+  schedulePrune() {
+    return this.state.storage.setAlarm(Date.now() + PRUNE_INTERVAL_MS);
+  }
+
+  /**
+   * Daily retention sweep (DO alarm handler).
+   *
+   * Deletes ONLY obsolete data: fields that carry a `null` value (gun
+   * tombstone / unset) whose last-write state is older than PRUNE_TTL_MS.
+   * Live non-null data is never touched, ever. A node whose every field has
+   * been pruned is removed entirely and the graph-node counter updated.
+   */
+  async prune() {
+    const cutoff = Date.now() - PRUNE_TTL_MS;
+    const puts = [];
+    const dels = [];
+    let removed = 0;
+
+    let cursor;
+    do {
+      const page = await this.state.storage.list({ prefix: "node:", cursor });
+      for (const [key, node] of page.entries()) {
+        const decision = pruneNode(node, cutoff);
+        if (decision.action === "delete") {
+          dels.push(this.state.storage.delete(key));
+          removed += 1;
+        } else if (decision.action === "keep") {
+          puts.push(this.state.storage.put(key, decision.next));
+        }
+      }
+      cursor = page?.list_complete === false ? page?.cursor : undefined;
+    } while (cursor);
+
+    if (dels.length || puts.length) {
+      await Promise.all([...dels, ...puts]);
+      if (removed) {
+        this.stats.graphNodes = Math.max(0, this.stats.graphNodes - removed);
+        await this.persistStats();
+      }
+    }
+  }
+
+  /** DO alarm handler — triggers the daily retention sweep. */
+  async alarm() {
+    await this.initialized;
+    await this.prune();
+    await this.schedulePrune();
   }
 
   async fetch(request) {

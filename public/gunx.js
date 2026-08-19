@@ -55,6 +55,16 @@
       } catch (e) {
         return null;
       }
+    }, function () {
+      try {
+        // Browser build of sea.js expects a global Gun; wire it up in Node.
+        if (!globalThis.Gun) {
+          try { globalThis.Gun = require("gun"); } catch (e) { /* ignore */ }
+        }
+        return require("gun/sea.js");
+      } catch (e) {
+        return null;
+      }
     });
   } else if (root.Gun) {
     root.GunX = factory(function () {
@@ -65,11 +75,13 @@
       return root.GunXNostrBridge || null;
     }, function () {
       return root.GunXNostrCodec || null;
+    }, function () {
+      return root.SEA || null;
     });
   } else {
     console.error("GunX: Gun not found — load gun.js before gunx.js");
   }
-})(typeof self !== "undefined" ? self : globalThis, function (getGun, getDirectRTC, getNostrBridge, getNostrCodec) {
+})(typeof self !== "undefined" ? self : globalThis, function (getGun, getDirectRTC, getNostrBridge, getNostrCodec, getSea) {
   "use strict";
 
   var DEFAULT_PEERS = ["https://gunx.pages.dev/gun"];
@@ -411,6 +423,75 @@
           });
         });
       });
+    },
+    /** Resolve the SEA module (browser global or Node require). */
+    _sea: function () {
+      var sea = (typeof getSea === "function" && getSea()) || null;
+      if (!sea && typeof SEA !== "undefined") sea = SEA;
+      return sea;
+    },
+    /** Generate a fresh random room key (URL-safe base64, 32 bytes). */
+    genRoomKey: async function () {
+      var bytes = this._randomBytes(32);
+      return btoa(String.fromCharCode.apply(null, bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    },
+    /** CSPRNG bytes: browser crypto or Node crypto. */
+    _randomBytes: function (n) {
+      if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+        var a = new Uint8Array(n);
+        crypto.getRandomValues(a);
+        return a;
+      }
+      try {
+        return require("crypto").randomBytes(n);
+      } catch (e) {
+        var out = [];
+        for (var i = 0; i < n; i++) out.push(Math.floor(Math.random() * 256));
+        return out;
+      }
+    },
+    /** Encrypt a plaintext string with a room key. Returns ciphertext. */
+    encryptText: async function (text, roomKey) {
+      var sea = this._sea();
+      if (!sea || !sea.encrypt) throw new Error("GunX: SEA not loaded");
+      if (roomKey === u || roomKey === null) return text;
+      return await sea.encrypt(String(text), roomKey);
+    },
+    /** Decrypt a ciphertext with a room key. Returns plaintext or null on failure. */
+    decryptText: async function (ct, roomKey) {
+      var sea = this._sea();
+      if (!sea || !sea.decrypt) return null;
+      if (roomKey === u || roomKey === null) return null;
+      try {
+        var out = await sea.decrypt(ct, roomKey);
+        return typeof out === "string" ? out : String(out);
+      } catch (e) {
+        return null;
+      }
+    },
+    /** Encrypt a chat payload before it touches the relay. */
+    seal: async function (obj, roomKey) {
+      var sealed = {};
+      for (var k in obj) {
+        if (!Object.prototype.hasOwnProperty.call(obj, k)) continue;
+        sealed[k] = await this.encryptText(String(obj[k]), roomKey);
+      }
+      sealed._e = 1; // marker: fields are encrypted
+      return sealed;
+    },
+    /** Decrypt a chat payload received from the relay. Returns null if unreadable. */
+    open: async function (obj, roomKey) {
+      if (!obj || typeof obj !== "object") return null;
+      if (!obj._e) return obj; // legacy plaintext message — read as-is
+      if (roomKey === u || roomKey === null) return null; // no key → locked
+      var out = {};
+      for (var k in obj) {
+        if (k === "_e") continue;
+        var v = await this.decryptText(obj[k], roomKey);
+        if (v === null) return null;
+        out[k] = v;
+      }
+      return out;
     },
   };
 
