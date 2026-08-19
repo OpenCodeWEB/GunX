@@ -149,6 +149,29 @@ gunx.get('chat').get('messages').map().on(async (m) => {
 | `gunx.uploadImage(image, opts)` | imgbb upload — `opts.proxy` (server-side, key stays secret) or `opts.key` (direct API) |
 | `gunx.destroy()` | Stop timers and listeners |
 
+## .gunx TLD registry (Phase 1)
+
+Zero-ICANN domains: names are owned by SEA keys, not registrars. Claim records live in the registry Durable Object and are verifiable by anyone (PoW + ECDSA signature).
+
+**Policy**
+- `1–3` chars → PoW diff 6 · `4–7` → diff 4 · `8+` → diff 2
+- `8+` chars: 3 free per pubkey; 4th+ = `Price(N) = 1 × 2^(N−3)` ABS (payment in Phase 4)
+- `1–7` chars: premium → `pending_payment`
+- Root admins (`ROOT_PUBKEYS` worker var) mint unlimited `active`
+- Inactive names expire after 90 days (daily DO alarm sweep)
+
+**API** (public, cryptographically safe — claims are verified inside the DO)
+
+```
+POST /api/domain/claim    { name, ownerPub, target, ts, nonce, diff, hash, sig }
+POST /api/domain/touch    { name, ownerPub, sig }            // SEA-only liveness
+GET  /api/domain/resolve?name=<n>
+GET  /api/domain/list?owner=<pub>
+GET  /api/domain/stats
+```
+
+Try it live: the playground at `gunx.pages.dev/#tld` — generate a key, mint a name, resolve it.
+
 ## How the relay works
 
 The Durable Object implements the GunDB wire protocol directly — no Node runtime involved:
@@ -181,14 +204,21 @@ GunX({ appKey: 'my-app', peers: ['wss://your-worker.pages.dev/gun'] });
 ## Project layout
 
 ```
-worker/src/GunRelayDO.js   — the Durable Object relay (hardened: rate limits, frame caps, batched stats)
-functions/gun.js           — Pages function: WebSocket upgrade → DO
-functions/api/stats.js     — /api/stats (live relay counters)
-functions/api/imgbb.js     — /api/imgbb (server-side imgbb proxy; key = Pages secret)
-functions/api/health.js    — /api/health
-functions/health.js        — /health alias
-sdk/gunx.js                — the client SDK (UMD: browser + Node)
-public/index.html          — playground + docs page
+worker/src/GunRelayDO.js       — the Durable Object relay (hardened: rate limits, frame caps, batched stats)
+worker/src/DomainRegistryDO.js — .gunx registry Durable Object (tiers, pricing, 90d expiry)
+worker/src/verify_claim.js     — server-side PoW + SEA (ECDSA P-256) verification
+worker/wrangler.toml           — worker config (GUN_PEER + DOMAIN_REGISTRY bindings, ROOT_PUBKEYS)
+wrangler.toml                  — Pages config (binds Pages Functions to the registry DO)
+functions/gun.js               — Pages function: WebSocket upgrade → DO
+functions/api/stats.js         — /api/stats (live relay counters)
+functions/api/imgbb.js         — /api/imgbb (server-side imgbb proxy; key = Pages secret)
+functions/api/health.js        — /api/health
+functions/api/domain/[[path]].js — /api/domain/* REST proxy → registry DO
+functions/health.js            — /health alias
+sdk/gunx.js                    — the client SDK (UMD: browser + Node)
+sdk/tld/pow.js                 — PoW mining/verification (browser + Node)
+sdk/tld/registry.js            — client registry (claim/touch/resolve helpers)
+public/index.html              — playground + docs page
 public/gunx.js             — SDK copy served at /gunx.js
 test/                      — raw protocol tests + SDK integration test
 ```
@@ -232,6 +262,8 @@ node sdk-test.js           # SDK integration test against the live relay
 node raw-ws-test.js        # raw WebSocket hello/put/ack
 node raw-get-shapes.js     # GET reply shapes (full node vs hash-check)
 node verify-parent.js      # parent lexicon materialization
+node --test test_tld.mjs   # .gunx registry unit tests (PoW + SEA + policy)
+node e2e_live.cjs          # live end-to-end against the deployed registry API
 ```
 
 ## Limits (shared public relay)

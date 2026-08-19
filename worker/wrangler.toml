@@ -6,9 +6,22 @@ compatibility_date = "2026-05-14"
 name = "GUN_PEER"
 class_name = "GunPeerObject"
 
+[[durable_objects.bindings]]
+name = "DOMAIN_REGISTRY"
+class_name = "DomainRegistryObject"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["GunPeerObject"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["DomainRegistryObject"]
+
+# Comma-separated SEA public keys with unlimited free mint (root admin).
+# Add your pubkey to enable: ROOT_PUBKEYS = "abc123...,def456..."
+[vars]
+ROOT_PUBKEYS = ""
 
 [observability]
 enabled = true

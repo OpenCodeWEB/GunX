@@ -65,6 +65,12 @@
       } catch (e) {
         return null;
       }
+    }, function () {
+      try {
+        return require("./tld/registry.js");
+      } catch (e) {
+        return null;
+      }
     });
   } else if (root.Gun) {
     root.GunX = factory(function () {
@@ -77,11 +83,13 @@
       return root.GunXNostrCodec || null;
     }, function () {
       return root.SEA || null;
+    }, function () {
+      return root.GunXRegistry || null;
     });
   } else {
     console.error("GunX: Gun not found — load gun.js before gunx.js");
   }
-})(typeof self !== "undefined" ? self : globalThis, function (getGun, getDirectRTC, getNostrBridge, getNostrCodec, getSea) {
+})(typeof self !== "undefined" ? self : globalThis, function (getGun, getDirectRTC, getNostrBridge, getNostrCodec, getSea, getRegistry) {
   "use strict";
 
   var DEFAULT_PEERS = ["https://gunx.pages.dev/gun"];
@@ -492,6 +500,33 @@
         out[k] = v;
       }
       return out;
+    },
+    /** SEA.sign wrapper (object → signature). Accepts a pair object or a bare priv key. */
+    sign: async function (obj, priv) {
+      var sea = this._sea();
+      if (!sea || !sea.sign) throw new Error("GunX: SEA not loaded");
+      var key = priv && typeof priv === "object" ? priv : { priv: priv };
+      return await sea.sign(obj, key);
+    },
+    /**
+     * SEA.verify wrapper. gun's SEA.verify(data, pair) takes the sealed
+     * signature as `data` and the public key as `pair` — this wrapper matches
+     * the (body, sig, pub) convention and cross-checks the recovered message.
+     */
+    verify: async function (obj, sig, pub) {
+      var sea = this._sea();
+      if (!sea || !sea.verify) return false;
+      var key = pub && typeof pub === "object" ? pub : { pub: pub };
+      var out = await sea.verify(sig, key);
+      if (!out) return false;
+      // gun SEA may reorder object keys — compare canonically.
+      var canon = function (o) {
+        if (typeof o !== "object" || o === null) return String(o);
+        var sorted = {};
+        Object.keys(o).sort().forEach(function (k) { sorted[k] = o[k]; });
+        return JSON.stringify(sorted);
+      };
+      return canon(out) === canon(obj);
     },
   };
 
@@ -968,6 +1003,16 @@
   GunX.prototype.directShareFile = function (file, peerId, opts) {
     if (!this.direct) return Promise.reject(new Error("DirectRTC module not loaded — include sdk/transports/direct_rtc.js"));
     return this.direct.directShareFile(file, peerId, opts);
+  };
+
+  /* ── .gunx TLD registry (sdk/tld/registry.js) ──────────────────── */
+
+  /** Create the .gunx domain registry manager bound to this instance. */
+  GunX.prototype.registry = function () {
+    var Registry = (typeof getRegistry === "function" && getRegistry()) || null;
+    if (!Registry) throw new Error("GunX: registry module not loaded — include sdk/tld/registry.js");
+    if (!this._registry) this._registry = new Registry(this);
+    return this._registry;
   };
 
   /* ── Teardown ────────────────────────────────────────────────────── */

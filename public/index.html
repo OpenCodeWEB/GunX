@@ -10,12 +10,15 @@
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/gun.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/gun@0.2020.1241/sea.js"></script>
 <script src="/js/vendor/qrcode-generator.js?v=6"></script>
-<script src="/gunx.js?v=8"></script>
+<script src="/gunx.js?v=9"></script>
+<script src="/js/pow.js?v=1"></script>
+<script src="/js/registry.js?v=1"></script>
 <script src="/js/direct_rtc.js?v=6"></script>
 <script src="/js/direct_ui.js?v=6"></script>
 <script src="/js/nostr_codec.js?v=7"></script>
 <script src="/js/nostr_bridge.js?v=7"></script>
 <script src="/js/rooms.js?v=8"></script>
+<script src="/js/tld_ui.js?v=1"></script>
 <script type="module" src="/js/nostr_ui.js?v=7"></script>
 <style>
   body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
@@ -45,6 +48,7 @@
       <a href="#playground" class="hover:text-teal-400 transition-colors">Playground</a>
       <a href="#direct" class="hover:text-teal-400 transition-colors">Direct Pair</a>
       <a href="#nostr" class="hover:text-violet-400 transition-colors">Nostr Mesh</a>
+      <a href="#tld" class="hover:text-amber-400 transition-colors">.gunx TLD</a>
       <a href="#quickstart" class="hover:text-teal-400 transition-colors">Quickstart</a>
       <a href="#features" class="hover:text-teal-400 transition-colors">Features</a>
       <a href="https://github.com/OpenCodeWEB/GunX" target="_blank" class="hover:text-teal-400 transition-colors"><i class="fa-brands fa-github"></i> GitHub</a>
@@ -242,6 +246,75 @@
   </div>
 </section>
 
+<!-- .gunx TLD registry (Phase 1) -->
+<section id="tld" class="max-w-6xl mx-auto px-4 py-10">
+  <div class="rounded-2xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+    <div class="px-6 py-4 border-b border-slate-800 flex items-center justify-between">
+      <h2 class="font-bold text-lg"><i class="fa-solid fa-globe text-amber-400 mr-2"></i>.gunx Registry <span class="text-xs font-normal text-slate-500">— zero-ICANN domains</span></h2>
+      <span class="px-2 py-1 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/20 text-xs mono">PoW + SEA · LWW · 90d expiry</span>
+    </div>
+    <div class="grid md:grid-cols-3">
+      <div class="md:col-span-2 p-6 space-y-5">
+        <div>
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Your identity</h3>
+          <div class="flex flex-wrap items-center gap-2">
+            <span id="tldPub" class="mono text-xs px-3 py-1.5 rounded-lg bg-slate-950 border border-slate-800 max-w-full"><span class="text-slate-500">no identity — generate one</span></span>
+            <button id="tldNewKeyBtn" class="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-500 text-slate-950 text-xs font-semibold">generate key</button>
+            <button id="tldClearKeyBtn" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs hidden">clear</button>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">Your pubkey is your owner id. Domains are signed with it — nobody can move or steal them.</p>
+        </div>
+        <div>
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Claim a name</h3>
+          <div class="flex flex-wrap gap-2">
+            <input id="tldNameInput" type="text" placeholder="yourname" spellcheck="false"
+              class="w-40 mono text-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/50">
+            <span class="text-slate-500 mono text-xs py-2">.gunx</span>
+            <input id="tldTargetInput" type="text" placeholder="target (node id / site / .onion…)" spellcheck="false"
+              class="flex-1 min-w-40 mono text-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/50">
+            <button id="tldClaimBtn" class="bg-gradient-to-r from-amber-500 to-orange-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90">Mint</button>
+          </div>
+          <p class="mt-2 text-xs text-slate-500">1–7 chars are premium (payment in Phase 4). 8+ chars: 3 free per key — 4th onwards <span class="mono text-amber-300">Price(N)=1×2^(N−3)</span>. 90 days without activity releases the name.</p>
+        </div>
+        <div>
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Lookup</h3>
+          <div class="flex gap-2">
+            <input id="tldResolveInput" type="text" placeholder="name to resolve" spellcheck="false"
+              class="w-48 mono text-xs bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-slate-200 focus:outline-none focus:ring-2 focus:ring-amber-500/50">
+            <button id="tldResolveBtn" class="px-3 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs">resolve</button>
+          </div>
+        </div>
+        <div>
+          <div class="flex items-center justify-between mb-2">
+            <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Your domains</h3>
+            <button id="tldRefreshBtn" class="text-xs px-2 py-1 rounded bg-slate-800 hover:bg-slate-700 text-slate-300">refresh</button>
+          </div>
+          <div id="tldMine" class="space-y-2"></div>
+        </div>
+        <div id="tldLog" class="h-28 overflow-y-auto space-y-1 rounded-lg bg-slate-950/60 border border-slate-800 p-3"></div>
+      </div>
+      <div class="border-t md:border-t-0 md:border-l border-slate-800 p-6 bg-slate-950/40">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">Registry status</h3>
+        <dl class="text-sm space-y-1 mono">
+          <div class="flex justify-between"><dt class="text-slate-500">total</dt><dd id="tldStatTotal" class="text-amber-300">—</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">tiers</dt><dd id="tldStatFree" class="text-slate-300">—</dd></div>
+          <div class="flex justify-between"><dt class="text-slate-500">lifecycle</dt><dd id="tldStatPending" class="text-slate-300">—</dd></div>
+        </dl>
+        <p id="tldStatPolicy" class="mt-4 text-xs text-slate-500 leading-relaxed">—</p>
+        <div class="mt-6 pt-4 border-t border-slate-800">
+          <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Why .gunx?</h3>
+          <ol class="text-sm text-slate-400 space-y-3 list-decimal list-inside">
+            <li>Claim records live in the GunDB graph — every reader re-verifies PoW + signature</li>
+            <li>Names are owned by SEA keys, not ICANN or any registrar</li>
+            <li>Smart routing (Phase 2) resolves <span class="mono text-amber-300">name.gunx</span> over LAN → WebRTC → Nostr → Tor</li>
+            <li>Inactive names return to the pool after 90 days</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- Quickstart -->
 <section id="quickstart" class="max-w-6xl mx-auto px-4 py-10">
   <h2 class="text-2xl font-bold mb-6">Quickstart</h2>
@@ -329,6 +402,7 @@ var gunx = GunX({ appKey: "gunx-playground", refreshMs: 10000, autoAccept: true 
   window.gunx = gunx; // debug/testing hook
   initDirectUI(gunx);
   if (window.initNostrUI) initNostrUI(gunx);
+  if (window.initTldUI) initTldUI(gunx);
   var rooms = new GunXRooms();
   var msgs = document.getElementById("messages");
   var form = document.getElementById("msgForm");

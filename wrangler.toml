@@ -1,8 +1,14 @@
-name = "gunx"
+# Pages Functions bind to the registry DO hosted on the gunx-do Worker.
+# Single namespace = single source of truth for .gunx records.
+name = "gunx-pages"
 compatibility_date = "2026-05-14"
 pages_build_output_dir = "public"
 
-# Bind the gun peer Durable Object worker (deployed separately from worker/)
+[[durable_objects.bindings]]
+name = "DOMAIN_REGISTRY"
+class_name = "DomainRegistryObject"
+script_name = "gunx-do"
+
 [[durable_objects.bindings]]
 name = "GUN_PEER"
 class_name = "GunPeerObject"

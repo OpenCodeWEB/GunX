@@ -50,6 +50,10 @@ const PRUNE_TTL_MS = 99 * 86400000 + 9 * 3600000 + 9 * 60000 + 9000; // 8,586,54
 export { PRUNE_TTL_MS };
 const PRUNE_INTERVAL_MS = 24 * 3600000; // sweep once a day via DO alarm
 
+// .gunx registry DO — deployed from this Worker; Pages Functions bind to it
+// via script_name = "gunx-do" (see wrangler.toml at repo root).
+export { DomainRegistryObject } from "./DomainRegistryDO.js";
+
 function json(data, init = {}) {
   return new Response(JSON.stringify(data), {
     ...init,
