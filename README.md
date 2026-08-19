@@ -54,7 +54,79 @@ gunx.get('todos').once(console.log);
 gunx.put('todos', { hello: 'world' });
 ```
 
-### SDK API
+## Migrating from Gun → GunX
+
+GunX is a **drop-in replacement**: `gunx.get/put/map/on/once/set` behave like gun's, so a migration is mostly changing the factory call — and you gain namespacing, auto-refresh, and encryption helpers for free.
+
+### API mapping
+
+| Gun | GunX |
+| --- | --- |
+| `Gun(['https://gunx.pages.dev/gun'])` | `GunX({ appKey: 'my-app' })` — relay auto-configured |
+| `gun.get('chat').map().on(cb)` | `gunx.get('chat').map().on(cb)` — same chain, namespaced |
+| `gun.get('chat/xyz').put({...})` | `gunx.put('chat/xyz', {...})` — same ack callback |
+| `gun.get(soul).once(cb)` | `gunx.get(soul).once(cb)` |
+| `Gun.SEA.encrypt/decrypt(data, key)` | `gunx.sea.seal(obj, key)` / `gunx.sea.open(obj, key)` — object-level, `_e:1` marker |
+| `Gun.SEA.pair()` + manual storage | `gunx.sea.savePair(pair)` / `loadPair()` / `asyncAuth(gunx, alias, pass)` |
+
+### What you gain
+
+1. **appKey namespacing** — your data is stored as `<appKey>/<soul>` on the shared relay; no manual prefixes, no collisions with other apps.
+2. **Auto-refresh sync** — the SDK re-asks the relay for subscribed souls, fixing GunDB's IndexedDB re-ask gap.
+3. **E2E room encryption** — `gunx.sea.seal/open` encrypt every field before data touches the relay; `genRoomKey()` makes private-room invite keys. Without the key (even the relay owner) can't read anything.
+4. **Retention policy** — the relay prunes **only tombstoned (null-put) fields** older than 99d 9h 9m 9s. Live data is never deleted, ever.
+5. **DirectRTC + Nostr bridge** — WebRTC P2P file transfer and NIP-01 Kind 30000 mesh are built in.
+
+### Before / after — chat app
+
+**Before (raw gun):**
+
+```js
+const gun = Gun(['https://gunx.pages.dev/gun']);
+const key = 'my-shared-key';
+
+async function send(text) {
+  const ct = await Gun.SEA.encrypt(text, key);
+  gun.get('chat').get('messages').set({ body: ct, ts: Date.now() });
+}
+gun.get('chat').get('messages').map().on(async (m) => {
+  if (m?.body) console.log(await Gun.SEA.decrypt(m.body, key));
+});
+```
+
+**After (GunX):**
+
+```js
+const gunx = GunX({ appKey: 'my-chat-app' });
+const roomKey = 'my-shared-key'; // or: await gunx.sea.genRoomKey()
+
+async function send(text) {
+  // seal() takes an OBJECT — every field is encrypted, _e:1 marker added
+  const sealed = await gunx.sea.seal({ t: text, from: 'me' }, roomKey);
+  gunx.get('chat').get('messages').set({ payload: sealed, ts: Date.now() });
+}
+gunx.get('chat').get('messages').map().on(async (m) => {
+  if (m?.payload) {
+    const msg = await gunx.sea.open(m.payload, roomKey);
+    if (msg) console.log(msg.t, '—', msg.from);
+  }
+});
+```
+
+### Gotchas
+
+- **Namespacing is automatic** — if you previously stored data at a bare soul with raw gun, reading it back through GunX requires the same `appKey` (data lives under `<appKey>/<soul>`).
+- **SEA must be loaded** — include `gun/sea.js` in the browser or `require('gun/sea.js')` (with `global.Gun` set) in Node, or `gunx.sea` helpers throw.
+- **Retention is tombstone-only** — nothing of yours expires automatically. If you `unset`/null-put a field, it is pruned after 99d 9h 9m 9s; live values persist forever.
+- **`seal/open` work on objects** — pass the whole payload object, not a string. `open` returns `null` when the key is wrong or missing (treat as "locked").
+
+### When NOT to use GunX
+
+- Heavy relational joins or analytics queries — a document/relational DB fits better than a P2P graph mesh.
+- Raw single-string encryption with no `_e:1` structure — use `gunx.sea.encryptText/decryptText` instead of `seal`.
+- You need your own relay topology/control plane — GunX targets the hosted `gunx.pages.dev` relay (self-hosting the DO is possible but experimental).
+
+## SDK API
 
 | Method | Description |
 | --- | --- |
@@ -65,6 +137,9 @@ gunx.put('todos', { hello: 'world' });
 | `gunx.refresh()` | Force plain-soul GETs to the relay for every tracked soul |
 | `gunx.on('status', cb)` | `connecting` → `connected` / `disconnected` events |
 | `gunx.sea.savePair / loadPair / asyncAuth` | SEA pair persistence + user auth helpers |
+| `gunx.sea.seal(obj, key)` / `sea.open(obj, key)` | E2E encrypt every field of a payload (`_e:1` marker) / decrypt back; `open` → `null` without the key |
+| `gunx.sea.genRoomKey()` | Random 32-byte URL-safe room key for private invite links |
+| `gunx.sea.encryptText / decryptText` | Raw string-level SEA encryption helpers |
 | `gunx.joinPresence(meta, ttl)` | Register as online (heartbeat); returns myId |
 | `gunx.onPeers(cb)` | Watch live peers; `cb(list)` on changes |
 | `gunx.shareFile(file, opts, cb)` | P2P WebRTC transfer to one peer (`opts.to`) or all online peers. Any size — adaptive 64KB–256KB chunks, no relay storage |
