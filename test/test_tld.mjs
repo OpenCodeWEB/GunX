@@ -30,6 +30,11 @@ import {
   priceFor,
   entitlementFor,
   expireScan,
+  rankDomains,
+  royaltyFor,
+  ROYALTY_BPS,
+  BENEFICIARY,
+  LICENSE,
   BASE_PRICE,
   FREE_DOMAINS_PER_OWNER,
   EXPIRE_TTL_MS,
@@ -43,8 +48,8 @@ before(() => {
 });
 
 after(() => {
-  // gun keeps handles alive; force exit (same pattern as test_rooms.mjs)
-  process.exit(0);
+  // NOTE: do NOT process.exit(0) here — it kills pending async tests before
+  // the runner reports them. The runner exits on its own once everything done.
 });
 
 /* ══════════════════════ pow.js (SDK) ══════════════════════ */
@@ -296,13 +301,14 @@ test("expire: names inactive for 90+ days are released", () => {
   const active = { name: "a", claimedAt: now - 10 * 86400000, lastActiveAt: now - 86400000 };
   const stale = { name: "b", claimedAt: now - 200 * 86400000, lastActiveAt: now - 100 * 86400000 };
   const expired = expireScan([active, stale], now);
-  assert.deepEqual(expired, ["b"]);
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0].name, "b");
 });
 
 test("expire: missing lastActiveAt falls back to claimedAt", () => {
   const now = Date.now();
   const old = { name: "c", claimedAt: now - 200 * 86400000 };
-  assert.deepEqual(expireScan([old], now), ["c"]);
+  assert.deepEqual(expireScan([old], now).map((r) => r.name), ["c"]);
   const fresh = { name: "d", claimedAt: now - 1000 };
   assert.deepEqual(expireScan([fresh], now), []);
 });
@@ -312,4 +318,98 @@ test("policy constants match the vision document", () => {
   assert.equal(EXPIRE_TTL_MS, 90 * 86400000);
   assert.equal(claimBody({ a: 1, sig: "x", b: 2 }).sig, undefined);
   assert.deepEqual(Object.keys(claimBody({ a: 1, b: 2, sig: "x" })), ["a", "b"]);
+});
+
+// ── Phase 2: royalty / dual-TLD / gift / ranking ─────────────────────
+
+test("royalty: every claim carries 33% to ABsUP (OpenCodeWEB license)", () => {
+  const r = royaltyFor();
+  assert.equal(r.royaltyBps, 3300);
+  assert.equal(ROYALTY_BPS, 3300);
+  assert.equal(r.beneficiary, "0x9016a472c308A4e87bed705D066636Adf625D1B0");
+  assert.equal(BENEFICIARY, "0x9016a472c308A4e87bed705D066636Adf625D1B0");
+  assert.equal(r.license, "OpenCodeWEB");
+  assert.equal(LICENSE, "OpenCodeWEB");
+});
+
+test("rank: domains sort by usage (resolves+touches) desc, tie → name", () => {
+  const records = [
+    { name: "low", resolves: 1, touches: 0 },
+    { name: "high", resolves: 30, touches: 5 },
+    { name: "mid", resolves: 10, touches: 2 },
+    { name: "aa", resolves: 1, touches: 1 },
+    { name: "bb", resolves: 1, touches: 1 },
+  ];
+  const ranked = rankDomains(records);
+  assert.deepEqual(ranked.map((r) => r.name), ["high", "mid", "aa", "bb", "low"]);
+});
+
+test(".absup mint: root key only (verifyClaim with requirePow=false)", async () => {
+  const claim = {
+    tld: "absup",
+    name: "ab",
+    ownerPub: alicePair.pub,
+    target: "node-abc",
+    ts: Date.now(),
+    nonce: 0,
+    diff: 6,
+    hash: "",
+  };
+  claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
+  // no PoW mined at all — signature alone must pass when requirePow=false
+  const ok = await verifyClaim(claim, { requirePow: false });
+  assert.equal(ok.ok, true);
+  // but the same claim must FAIL when PoW is required (public .gunx rule)
+  const nope = await verifyClaim(claim);
+  assert.equal(nope.ok, false);
+});
+
+test("gift: owner-signed { name, tld, newOwnerPub } verifies for transfer", async () => {
+  const gift = { name: "ab", tld: "absup", newOwnerPub: bobPair.pub };
+  const sig = await SEA.sign(gift, { pub: alicePair.pub, priv: alicePair.priv });
+  assert.equal(await verifySeaSig(gift, sig, alicePair.pub), true);
+  // anyone else's signature must not verify as alice
+  const evilSig = await SEA.sign(gift, { pub: bobPair.pub, priv: bobPair.priv });
+  assert.equal(await verifySeaSig(gift, evilSig, alicePair.pub), false);
+});
+
+test("migration: legacy domain:<name> keys re-key to domain:gunx:<name>", async () => {
+  const mod = await import("../worker/src/DomainRegistryDO.js");
+  const { DomainRegistryObject } = mod;
+
+  const store = new Map([
+    ["domain:legacyname", { name: "legacyname", ownerPub: "pubA", target: "x", claimedAt: 1, lastActiveAt: 1 }],
+    ["domain:gunx:modern", { name: "modern", tld: "gunx", ownerPub: "pubB", target: "y", claimedAt: 1, lastActiveAt: 1 }],
+    ["meta:domains", 2],
+  ]);
+  const state = {
+    storage: {
+      get: async (k) => store.get(k),
+      put: async (k, v) => store.set(k, v),
+      delete: async (k) => store.delete(k),
+      list: async ({ prefix }) => {
+        const entries = [...store.entries()].filter(([k]) => k.startsWith(prefix));
+        return { entries: () => entries, list_complete: true };
+      },
+      setAlarm: async () => {},
+    },
+  };
+
+  const doInst = new DomainRegistryObject(state, { ROOT_PUBKEYS: "" });
+  await doInst.initialized;
+
+  // legacy key moved + tagged as gunx
+  assert.equal(store.has("domain:legacyname"), false, "legacy key deleted");
+  assert.ok(store.has("domain:gunx:legacyname"), "re-keyed under tld namespace");
+  assert.equal(store.get("domain:gunx:legacyname").tld, "gunx");
+  // modern keys untouched
+  assert.equal(store.get("domain:gunx:modern").ownerPub, "pubB");
+
+  // resolve on the migrated record works through the DO fetch path
+  const res = await doInst.fetch(new Request("https://do.local/resolve?name=legacyname"));
+  const data = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(data.ok, true);
+  assert.equal(data.record.name, "legacyname");
+  assert.equal(data.record.tld, "gunx");
 });

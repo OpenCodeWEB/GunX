@@ -272,6 +272,24 @@ node e2e_live.cjs          # live end-to-end against the deployed registry API
 - Token-bucket rate limiting per connection and per IP.
 - Free Cloudflare tier: 10 GB DO SQLite storage, worker CPU time limits — fine for hobby/P2P apps; self-host for heavy traffic.
 
+## Web3 identity
+
+GunX is built by **ABsUP / OpenCodeWEB** — verified web3 identity at [web3.bio/ABsUP](https://web3.bio/ABsUP):
+
+| Identity | Handle |
+|---|---|
+| Wallet (Ethereum) | `0x9016...d1b0` |
+| ENS | [absup.org](https://web3.bio/absup.org) |
+| Basenames | `absup.base.eth` |
+| Farcaster | [@absup](https://farcaster.xyz/absup) (verified) |
+| Lens | [absup.lens](https://web3.bio/absup.lens) (verified) |
+| X / Twitter | [@absupx](https://x.com/absupx) (verified) |
+| GitHub | [absups](https://github.com/absups) |
+| Telegram / Discord | @absups |
+| Website | [absup.org/c](https://absup.org/c) |
+
+Phase 4 will bind `.gunx` ownership to this wallet via EIP-712 signatures (Trust Wallet).
+
 ## License
 
 MIT — build anything you want on it. OpenCodeWEB / ABsUP.

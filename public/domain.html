@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GunX Domain Registry — leaderboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-200 min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-950/80 backdrop-blur sticky top-0 z-10">
+    <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+      <a href="/" class="text-lg font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">GunX</a>
+      <nav class="flex items-center gap-4 text-xs">
+        <a href="/" class="text-slate-400 hover:text-slate-200">playground</a>
+        <span class="text-amber-400 font-semibold">/domain leaderboard</span>
+        <a href="https://github.com/OpenCodeWEB/GunX" target="_blank" rel="noopener" class="text-slate-400 hover:text-slate-200">github ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="max-w-5xl mx-auto px-4 py-8">
+    <div class="flex items-center justify-between flex-wrap gap-2 mb-6">
+      <div>
+        <h1 class="text-2xl font-bold text-slate-100">Domain registry</h1>
+        <p class="text-xs text-slate-500 mt-1">Every .gunx and .absup name — ranked by live usage (resolves + touches). Every name carries a 33% OpenCodeWEB royalty → ABsUP.</p>
+      </div>
+      <div class="flex gap-2 text-xs">
+        <button id="sortUsage" class="px-3 py-1.5 rounded-lg bg-amber-600 text-slate-950 font-semibold">by usage</button>
+        <button id="sortNew" class="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300">newest</button>
+      </div>
+    </div>
+
+    <div id="list" class="space-y-2"></div>
+    <p id="empty" class="hidden text-xs text-slate-500 text-center py-8">no domains yet — be the first to mint one in the <a href="/" class="text-teal-400 hover:underline">playground</a></p>
+  </main>
+
+  <script>
+    var API = "/api/domain";
+    var W3B = "/api/w3b";
+
+    function esc(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    }
+
+    function ownerLabel(ownerPub, tld) {
+      // .absup names are minted by the ABsUP root — show the brand instead of the key.
+      if (tld === "absup") return "ABsUP";
+      return ownerPub ? ownerPub.slice(0, 10) + "…" + ownerPub.slice(-4) : "?";
+    }
+
+    async function load(sort) {
+      var list = document.getElementById("list");
+      list.innerHTML = '<p class="text-xs text-slate-500 text-center py-8">loading…</p>';
+      try {
+        var res = await fetch(API + "/domains?sort=" + sort);
+        var data = await res.json();
+        var domains = (data.ok && data.domains) || [];
+        document.getElementById("empty").classList.toggle("hidden", domains.length > 0);
+        list.innerHTML = "";
+        if (!domains.length) return;
+        domains.forEach(function (d, i) {
+          var tld = d.tld || "gunx";
+          var uses = (d.resolves || 0) + (d.touches || 0);
+          var row = document.createElement("div");
+          row.className = "flex items-center gap-3 text-xs mono bg-slate-900/60 border border-slate-800 rounded-xl px-4 py-3 hover:border-slate-700";
+          row.innerHTML =
+            '<span class="text-slate-600 w-6 text-right">' + (i + 1) + "</span>" +
+            '<span class="font-semibold text-teal-300 min-w-32 truncate">' + esc(d.name) + "." + tld + "</span>" +
+            '<span class="text-slate-500 flex-1 truncate hidden sm:block">' + esc(d.target || "") + "</span>" +
+            '<span class="text-slate-400 min-w-24 truncate hidden md:block">' + ownerLabel(d.ownerPub, tld) + "</span>" +
+            '<span class="text-amber-300 min-w-16 text-right" title="resolves + touches">' + uses + " uses</span>" +
+            '<span class="text-slate-500 min-w-20 text-right hidden sm:block">' + (d.status || "") + "</span>";
+          list.appendChild(row);
+        });
+        // enrich owners with web3.bio (best-effort, only for .gunx evm-adjacent keys)
+        for (var i = 0; i < domains.length; i++) {
+          var d = domains[i];
+          if ((d.tld || "gunx") === "gunx" && d.ownerPub) {
+            try {
+              var pr = await fetch(W3B + "/profile/" + encodeURIComponent(d.ownerPub));
+              if (pr.ok) {
+                var arr = await pr.json();
+                if (Array.isArray(arr) && arr.length && list.children[i]) {
+                  var best = arr.find(function (p) { return p.platform === "ens" || p.platform === "farcaster" || p.platform === "lens"; }) || arr[0];
+                  if (best && best.displayName) {
+                    list.children[i].querySelector(".min-w-24").textContent = best.displayName;
+                  }
+                }
+              }
+            } catch (e) { /* best-effort */ }
+          }
+        }
+      } catch (e) {
+        list.innerHTML = '<p class="text-xs text-red-400 text-center py-8">load error: ' + esc(e.message) + "</p>";
+      }
+    }
+
+    document.getElementById("sortUsage").addEventListener("click", function () { load("usage"); });
+    document.getElementById("sortNew").addEventListener("click", function () { load("new"); });
+    load("usage");
+    setInterval(function () { load("usage"); }, 30000);
+  </script>
+</body>
+</html>

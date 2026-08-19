@@ -1,10 +1,12 @@
 /**
  * /api/domain/* — .gunx registry REST API (Pages Functions → DomainRegistryDO).
  *
- *   POST /api/domain/claim    { name, ownerPub, target, ts, nonce, diff, hash, sig }
- *   POST /api/domain/touch    { name, ownerPub, ts, nonce, diff, hash, sig }
- *   GET  /api/domain/resolve?name=alice
+ *   POST /api/domain/claim    { tld?, name, ownerPub, target, ts, nonce, diff, hash, sig }
+ *   POST /api/domain/touch    { tld?, name, ownerPub, ts, nonce, diff, hash, sig }
+ *   POST /api/domain/transfer { tld?, name, ownerPub, newOwnerPub, sig }
+ *   GET  /api/domain/resolve?name=alice&tld=gunx
  *   GET  /api/domain/list?owner=<pub>
+ *   GET  /api/domain/domains?sort=usage
  *   GET  /api/domain/stats
  *
  * Claims are verified cryptographically inside the Durable Object
@@ -31,9 +33,9 @@ export async function onRequest(context) {
   const action = path.split("/")[0];
 
   const target = new URL(url.toString());
-  if (action === "claim" || action === "touch") {
+  if (["claim", "touch", "transfer"].includes(action)) {
     target.pathname = "/" + action;
-  } else if (action === "resolve" || action === "list" || action === "stats") {
+  } else if (["resolve", "list", "domains", "stats"].includes(action)) {
     target.pathname = "/" + action;
   } else {
     return new Response(JSON.stringify({ error: "not found" }), {

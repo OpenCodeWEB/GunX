@@ -141,10 +141,16 @@ export async function verifySeaSig(body, sig, pub) {
   }
 }
 
-/** End-to-end claim verification: PoW + difficulty + SEA signature. */
-export async function verifyClaim(claim) {
-  const pw = await verifyPoW(claim);
-  if (!pw.ok) return { ok: false, error: pw.error };
+/**
+ * End-to-end claim verification: PoW + difficulty + SEA signature.
+ * `requirePow` can be disabled for root-only namespaces (.absup) where the
+ * root SEA key itself is the gate.
+ */
+export async function verifyClaim(claim, { requirePow = true } = {}) {
+  if (requirePow) {
+    const pw = await verifyPoW(claim);
+    if (!pw.ok) return { ok: false, error: pw.error };
+  }
   const body = claimBody(claim);
   const verified = await verifySeaSig(body, claim.sig, claim.ownerPub);
   if (!verified) return { ok: false, error: "SEA signature invalid" };

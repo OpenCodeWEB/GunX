@@ -60,53 +60,84 @@
   }
 
   /** Storage soul for a domain claim. */
-  GunXRegistry.prototype.soul = function (name) {
-    return "tld/gunx/" + String(name).toLowerCase();
+  GunXRegistry.prototype.soul = function (name, tld) {
+    return "tld/" + (tld || "gunx") + "/" + String(name).toLowerCase();
   };
 
-  /** All claims under the registry (map soul — no trailing slash). */
-  GunXRegistry.prototype.rootSoul = function () {
-    return "tld/gunx";
+  /** All claims under a TLD (map soul — no trailing slash). */
+  GunXRegistry.prototype.rootSoul = function (tld) {
+    return "tld/" + (tld || "gunx");
   };
 
   /**
    * Mine PoW + SEA-sign + put a domain claim.
-   * @param {string} name      desired name (without .gunx)
+   * @param {string} name      desired name (without the TLD suffix)
    * @param {string} target    routing target (node id / onion / host)
    * @param {object} pair      SEA key pair { pub, priv, eph }
    * @param {number} [ts]      claim timestamp (defaults to now)
+   * @param {string} [tld]     "gunx" (public) or "absup" (root-only)
    * @returns {Promise<object>} the claim record
    */
-  GunXRegistry.prototype.claim = async function (name, target, pair, ts) {
+  GunXRegistry.prototype.claim = async function (name, target, pair, ts, tld) {
     var g = this.gunx;
     name = String(name).toLowerCase();
-    var diff = this.pow.getDifficulty(name);
+    var tt = tld || "gunx";
     var stamp = ts || Date.now();
-    var mine = await this.pow.mine(name, pair.pub, String(target), stamp, diff);
     var claim = {
+      tld: tt,
       name: name,
       ownerPub: pair.pub,
       target: String(target),
       ts: stamp,
-      nonce: mine.nonce,
-      diff: diff,
-      hash: mine.hash,
     };
+    // .absup is root-minted: no PoW needed (the root key IS the gate).
+    if (tt === "absup") {
+      claim.nonce = 0;
+      claim.diff = 0;
+      claim.hash = "";
+    } else {
+      var diff = this.pow.getDifficulty(name);
+      var mine = await this.pow.mine(name, pair.pub, String(target), stamp, diff);
+      claim.nonce = mine.nonce;
+      claim.diff = diff;
+      claim.hash = mine.hash;
+    }
     var sig = await g.sea.sign(claim, pair);
     claim.sig = sig;
-    await g.put(this.soul(name), claim);
+    await g.put(this.soul(name, tt), claim);
     return claim;
   };
 
   /**
+   * Gift a domain: current owner signs { name, tld, newOwnerPub }.
+   * @param {string} name         domain label
+   * @param {string} tld          "gunx" | "absup"
+   * @param {object} pair         current owner's SEA pair
+   * @param {string} newOwnerPub  recipient pubkey
+   * @returns {Promise<object>}   signed gift record (put to the graph)
+   */
+  GunXRegistry.prototype.transfer = async function (name, tld, pair, newOwnerPub) {
+    var g = this.gunx;
+    var gift = { name: String(name).toLowerCase(), tld: tld || "gunx", newOwnerPub: newOwnerPub };
+    var sig = await g.sea.sign(gift, pair);
+    gift.sig = sig;
+    gift.fromPub = pair.pub;
+    await g.put(this.soul(gift.name, gift.tld) + "/gift", gift);
+    return gift;
+  };
+
+  /**
    * Verify a claim record end-to-end: PoW + difficulty + SEA signature.
+   * .absup records skip PoW (root-key gate) but still require the signature.
    * @returns {Promise<{ok:boolean, error?:string, claim?:object}>}
    */
   GunXRegistry.prototype.verify = async function (claim) {
     var g = this.gunx;
     if (!claim || typeof claim !== "object") return { ok: false, error: "claim required" };
-    var pw = await this.pow.verify(claim);
-    if (!pw.ok) return { ok: false, error: pw.error };
+    if ((claim.tld || "gunx") !== "absup") {
+      var pw = await this.pow.verify(claim);
+      if (!pw.ok) return { ok: false, error: pw.error };
+    }
     // Signature over the canonical claim (sig excluded).
     var body = {};
     for (var k in claim) {
@@ -119,10 +150,11 @@
   };
 
   /** Read + verify a single claim. */
-  GunXRegistry.prototype.resolve = async function (name) {
+  GunXRegistry.prototype.resolve = async function (name, tld) {
     var g = this.gunx;
+    var tt = tld || "gunx";
     var claim = await new Promise(function (resolve) {
-      g.get(g.un ? g.ns(this.soul(name)) : this.soul(name)).once(function (node) {
+      g.get(g.un ? g.ns(this.soul(name, tt)) : this.soul(name, tt)).once(function (node) {
         resolve(node || null);
       });
       setTimeout(function () { resolve("__timeout__"); }, 8000);
@@ -134,12 +166,13 @@
   /**
    * Live-subscribe the registry: every claim verified on arrival.
    * @param {function} cb  ({ok, error?, claim?}, key)
+   * @param {string} [tld] "gunx" | "absup"
    * @returns {function}   unsubscribe
    */
-  GunXRegistry.prototype.watch = function (cb) {
+  GunXRegistry.prototype.watch = function (cb, tld) {
     var g = this.gunx;
     var self = this;
-    var rootSoul = this.rootSoul();
+    var rootSoul = this.rootSoul(tld);
     var sub = g.get(rootSoul).map().on(function (node, key) {
       if (!node || typeof node !== "object") return;
       if (node["#"] || node._) return; // parent refs — not claims
