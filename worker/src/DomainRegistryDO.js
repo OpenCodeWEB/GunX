@@ -32,7 +32,7 @@ export const MAX_NAME_LEN = 63;
 export const ROYALTY_BPS = 3300; // 33% of derived value flows to ABsUP
 export const BENEFICIARY = "0x9016a472c308A4e87bed705D066636Adf625D1B0";
 export const LICENSE = "OpenCodeWEB";
-export const TLDS = ["gunx", "absup"];
+export const TLDS = ["gunx", "absup", "onion"];
 
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -42,7 +42,7 @@ const JSON_HEADERS = {
 };
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}$/;
-const TLD_RE = /^(gunx|absup)$/;
+const TLD_RE = /^(gunx|absup|onion)$/;
 
 /** Domain tier by length — 1-7 chars are premium, 8+ are free-tier. */
 export function tierFor(name) {
@@ -66,6 +66,7 @@ export function royaltyFor() {
  *
  * @param {object} opts
  *   name         lower-case domain label
+ *   tld          target TLD (default "gunx") — "onion" = unlimited public
  *   ownerPub     claiming pubkey
  *   total        global live domain count (N in pricing)
  *   ownerCount   live domains already owned by this pubkey
@@ -73,10 +74,15 @@ export function royaltyFor() {
  * @returns {{allowed:boolean, tier:string, price:number, source:string,
  *            status:string, reason?:string}}
  */
-export function entitlementFor({ name, ownerPub, total = 0, ownerCount = 0, isRoot = false }) {
+export function entitlementFor({ name, ownerPub, total = 0, ownerCount = 0, isRoot = false, tld = "gunx" }) {
   const tier = tierFor(name);
   if (isRoot) {
     return { allowed: true, tier, price: 0, source: "admin", status: "active" };
+  }
+  // `.onion` is the unlimited public TLD — no count limit, no payment gate.
+  // PoW is still enforced by verifyClaim before entitlement runs.
+  if (tld === "onion") {
+    return { allowed: true, tier, price: 0, source: "public", status: "active" };
   }
   if (tier === "free") {
     const remaining = FREE_DOMAINS_PER_OWNER - ownerCount;
@@ -334,6 +340,7 @@ export class DomainRegistryObject {
     const isRoot = this.rootPubkeys().has(body.ownerPub);
 
     // .absup is owner-only: only the ABsUP root key can mint.
+    // .onion is fully public — anyone can mint (unlimited, PoW-gated).
     if (tld === "absup" && !isRoot) {
       return json({ error: ".absup is ABsUP-owned — minted by the root key or gifted" }, 403);
     }
@@ -365,6 +372,7 @@ export class DomainRegistryObject {
     const ownerCount = (await this.state.storage.get(`owner:${body.ownerPub}:count`)) || 0;
     const ent = entitlementFor({
       name,
+      tld,
       ownerPub: body.ownerPub,
       total: this.totalDomains,
       ownerCount,

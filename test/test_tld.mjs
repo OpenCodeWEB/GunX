@@ -1,5 +1,5 @@
-/**
- * test_tld.mjs — GunX Phase 1: .gunx TLD registry engine tests.
+﻿/**
+ * test_tld.mjs â€” GunX Phase 1: .gunx TLD registry engine tests.
  *
  * Covers:
  *   - sdk/tld/pow.js        difficulty brackets, mining, verification
@@ -38,9 +38,10 @@ import {
   BASE_PRICE,
   FREE_DOMAINS_PER_OWNER,
   EXPIRE_TTL_MS,
+  TLDS,
 } from "../worker/src/DomainRegistryDO.js";
 
-// ── SEA (needs the global Gun wired before loading sea.js) ─────────
+// â”€â”€ SEA (needs the global Gun wired before loading sea.js) â”€â”€â”€â”€â”€â”€â”€â”€â”€
 let SEA = null;
 before(() => {
   if (!globalThis.Gun) globalThis.Gun = require("gun");
@@ -48,11 +49,11 @@ before(() => {
 });
 
 after(() => {
-  // NOTE: do NOT process.exit(0) here — it kills pending async tests before
+  // NOTE: do NOT process.exit(0) here â€” it kills pending async tests before
   // the runner reports them. The runner exits on its own once everything done.
 });
 
-/* ══════════════════════ pow.js (SDK) ══════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• pow.js (SDK) â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 test("pow: difficulty brackets by name length", () => {
   assert.equal(PoW.getDifficulty("a"), 6);
@@ -86,7 +87,7 @@ test("pow: wrong difficulty is rejected", async () => {
     target: "node1",
     ts: 1700000000000,
     nonce: mine.nonce,
-    diff: 4, // forged difficulty — must fail
+    diff: 4, // forged difficulty â€” must fail
     hash: mine.hash,
   });
   assert.equal(chk.ok, false);
@@ -98,7 +99,7 @@ test("pow: invalid names are rejected", async () => {
   assert.equal(chk.ok, false);
 });
 
-/* ══════════════════════ registry.js (SDK) ══════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• registry.js (SDK) â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 function mockGunx() {
   const store = new Map();
@@ -138,7 +139,7 @@ before(async () => {
   [alicePair, bobPair] = await Promise.all([SEA.pair(), SEA.pair()]);
 });
 
-test("registry: claim → resolve → verify round-trip", async () => {
+test("registry: claim â†’ resolve â†’ verify round-trip", async () => {
   const gunx = mockGunx();
   const reg = new GunXRegistry(gunx);
   const claim = await reg.claim("myfreename", "node-abc", alicePair, 1700000000000);
@@ -169,7 +170,7 @@ test("registry: countByOwner tallies only that owner's claims", async () => {
   await reg.claim("firstname", "n1", alicePair, 1700000000000);
   await reg.claim("secondname", "n2", alicePair, 1700000000001);
   await reg.claim("thirdname", "n3", bobPair, 1700000000002);
-  // countByOwner reads the root map — mock with a flat put on rootSoul
+  // countByOwner reads the root map â€” mock with a flat put on rootSoul
   gunx._store.set("tld/gunx", {
     one: { "#": "tld/gunx/one" },
     two: { "#": "tld/gunx/two" },
@@ -183,7 +184,7 @@ test("registry: countByOwner tallies only that owner's claims", async () => {
   assert.equal(alice, 2);
 });
 
-/* ══════════════════════ verify_claim.js (Worker) ══════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• verify_claim.js (Worker) â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 test("verify: SEA signature made by gun/sea.js verifies with Web Crypto", async () => {
   const body = { name: "myfreename", ownerPub: alicePair.pub, target: "node-abc", ts: 1700000000000, nonce: 7, diff: 2, hash: "00abc" };
@@ -238,7 +239,7 @@ test("verify: touch-style {name, ownerPub} signature passes, forged owner fails"
   assert.equal(await verifySeaSig(claimBody({ ...body, sig }), sig, alicePair.pub), true);
   const forged = { name: "myfreename", ownerPub: bobPair.pub };
   const forgedSig = await SEA.sign(forged, { pub: bobPair.pub, priv: bobPair.priv });
-  // attacker signs with their own key but claims alice's pub — mismatch must fail
+  // attacker signs with their own key but claims alice's pub â€” mismatch must fail
   assert.equal(await verifySeaSig(claimBody({ ...forged, sig: forgedSig }), forgedSig, alicePair.pub), false);
 });
 
@@ -252,7 +253,7 @@ test("verify: difficulty agreement between SDK and Worker", () => {
   }
 });
 
-/* ══════════════════════ DomainRegistryDO pure logic ══════════════════════ */
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• DomainRegistryDO pure logic â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 
 test("tier: 1-7 chars premium, 8+ free", () => {
   assert.equal(tierFor("x"), "premium");
@@ -260,7 +261,7 @@ test("tier: 1-7 chars premium, 8+ free", () => {
   assert.equal(tierFor("abcdefgh"), "free");
 });
 
-test("pricing: Price(N) = BASE × 2^(N−3), floor at 1", () => {
+test("pricing: Price(N) = BASE Ã— 2^(Nâˆ’3), floor at 1", () => {
   assert.equal(priceFor(0), BASE_PRICE);
   assert.equal(priceFor(3), BASE_PRICE);
   assert.equal(priceFor(4), BASE_PRICE * 2);
@@ -320,7 +321,7 @@ test("policy constants match the vision document", () => {
   assert.deepEqual(Object.keys(claimBody({ a: 1, b: 2, sig: "x" })), ["a", "b"]);
 });
 
-// ── Phase 2: royalty / dual-TLD / gift / ranking ─────────────────────
+// â”€â”€ Phase 2: royalty / dual-TLD / gift / ranking â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test("royalty: every claim carries 33% to ABsUP (OpenCodeWEB license)", () => {
   const r = royaltyFor();
@@ -332,7 +333,7 @@ test("royalty: every claim carries 33% to ABsUP (OpenCodeWEB license)", () => {
   assert.equal(LICENSE, "OpenCodeWEB");
 });
 
-test("rank: domains sort by usage (resolves+touches) desc, tie → name", () => {
+test("rank: domains sort by usage (resolves+touches) desc, tie â†’ name", () => {
   const records = [
     { name: "low", resolves: 1, touches: 0 },
     { name: "high", resolves: 30, touches: 5 },
@@ -356,7 +357,7 @@ test(".absup mint: root key only (verifyClaim with requirePow=false)", async () 
     hash: "",
   };
   claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
-  // no PoW mined at all — signature alone must pass when requirePow=false
+  // no PoW mined at all â€” signature alone must pass when requirePow=false
   const ok = await verifyClaim(claim, { requirePow: false });
   assert.equal(ok.ok, true);
   // but the same claim must FAIL when PoW is required (public .gunx rule)
@@ -412,4 +413,143 @@ test("migration: legacy domain:<name> keys re-key to domain:gunx:<name>", async 
   assert.equal(data.ok, true);
   assert.equal(data.record.name, "legacyname");
   assert.equal(data.record.tld, "gunx");
+});
+
+/* â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• Phase A: .onion unlimited TLD â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
+
+test("onion: TLD registered in policy list", () => {
+  assert.ok(TLDS.includes("onion"));
+});
+
+test("onion: entitlement is unlimited public â€” no free/paid gating", () => {
+  // 99 domains already owned by this pubkey â€” still allowed & active
+  const e = entitlementFor({ name: "myonions", tld: "onion", ownerPub: "p", total: 50, ownerCount: 99, isRoot: false });
+  assert.equal(e.allowed, true);
+  assert.equal(e.status, "active");
+  assert.equal(e.source, "public");
+  assert.equal(e.price, 0);
+  // even a premium-length (1-7) onion name is active immediately
+  const short = entitlementFor({ name: "ab", tld: "onion", ownerPub: "p", total: 50, ownerCount: 0, isRoot: false });
+  assert.equal(short.status, "active");
+  assert.equal(short.price, 0);
+});
+
+test("onion: verifyClaim requires PoW like .gunx (no absup-style bypass)", async () => {
+  const claim = {
+    tld: "onion",
+    name: "myonions",
+    ownerPub: alicePair.pub,
+    target: "node-abc",
+    ts: 1700000000000,
+    nonce: 1,
+    diff: 2,
+    hash: "nope",
+  };
+  claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
+  const res = await verifyClaim(claim);
+  assert.equal(res.ok, false); // bad PoW â†’ rejected
+
+  const mine = await PoW.mine("myonions", alicePair.pub, "node-abc", 1700000000000, 2);
+  const { sig: _oldSig, ...rest } = claim; // drop stale sig before re-signing
+  const good = { ...rest, nonce: mine.nonce, hash: mine.hash };
+  good.sig = await SEA.sign(good, { pub: alicePair.pub, priv: alicePair.priv });
+  const ok = await verifyClaim(good);
+  assert.equal(ok.ok, true);
+});
+
+test("onion: DO fetch path â€” non-root mint succeeds with PoW, stats byTld", async () => {
+  const mod = await import("../worker/src/DomainRegistryDO.js");
+  const { DomainRegistryObject } = mod;
+
+  const store = new Map();
+  const state = {
+    storage: {
+      get: async (k) => store.get(k),
+      put: async (k, v) => store.set(k, v),
+      delete: async (k) => store.delete(k),
+      list: async ({ prefix }) => {
+        const entries = [...store.entries()].filter(([k]) => k.startsWith(prefix));
+        return { entries: () => entries, list_complete: true };
+      },
+      setAlarm: async () => {},
+    },
+  };
+  const doInst = new DomainRegistryObject(state, { ROOT_PUBKEYS: "" });
+  await doInst.initialized;
+
+  const ts = Date.now();
+  const mine = await PoW.mine("myonions", alicePair.pub, "node-abc", ts, 2);
+  const claim = { tld: "onion", name: "myonions", ownerPub: alicePair.pub, target: "node-abc", ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
+  claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
+
+  const res = await doInst.fetch(
+    new Request("https://do.local/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(claim),
+    }),
+  );
+  const data = await res.json();
+  assert.equal(res.status, 201);
+  assert.equal(data.ok, true);
+  assert.equal(data.record.tld, "onion");
+  assert.equal(data.record.status, "active");
+  assert.equal(data.record.source, "public");
+
+  const statsRes = await doInst.fetch(new Request("https://do.local/stats"));
+  const s = await statsRes.json();
+  assert.equal(s.stats.byTld.onion, 1);
+  assert.ok(s.policy.tlDs.includes("onion"));
+});
+
+test("onion: gift transfer works via DO /transfer", async () => {
+  const mod = await import("../worker/src/DomainRegistryDO.js");
+  const { DomainRegistryObject } = mod;
+
+  const store = new Map();
+  const state = {
+    storage: {
+      get: async (k) => store.get(k),
+      put: async (k, v) => store.set(k, v),
+      delete: async (k) => store.delete(k),
+      list: async ({ prefix }) => {
+        const entries = [...store.entries()].filter(([k]) => k.startsWith(prefix));
+        return { entries: () => entries, list_complete: true };
+      },
+      setAlarm: async () => {},
+    },
+  };
+  const doInst = new DomainRegistryObject(state, { ROOT_PUBKEYS: "" });
+  await doInst.initialized;
+
+  const ts = Date.now();
+  const mine = await PoW.mine("giftname", alicePair.pub, "node-abc", ts, 2);
+  const claim = { tld: "onion", name: "giftname", ownerPub: alicePair.pub, target: "node-abc", ts, nonce: mine.nonce, diff: 2, hash: mine.hash };
+  claim.sig = await SEA.sign(claim, { pub: alicePair.pub, priv: alicePair.priv });
+  const mintRes = await doInst.fetch(
+    new Request("https://do.local/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(claim),
+    }),
+  );
+  assert.equal(mintRes.status, 201);
+
+  const gift = { name: "giftname", tld: "onion", newOwnerPub: bobPair.pub };
+  const giftSig = await SEA.sign(gift, { pub: alicePair.pub, priv: alicePair.priv });
+  const transferRes = await doInst.fetch(
+    new Request("https://do.local/transfer", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...gift, ownerPub: alicePair.pub, sig: giftSig }),
+    }),
+  );
+  const tdata = await transferRes.json();
+  assert.equal(transferRes.status, 200);
+  assert.equal(tdata.ok, true);
+  assert.equal(tdata.record.ownerPub, bobPair.pub);
+
+  const res = await doInst.fetch(new Request("https://do.local/resolve?name=giftname&tld=onion"));
+  const rdata = await res.json();
+  assert.equal(rdata.record.ownerPub, bobPair.pub);
 });

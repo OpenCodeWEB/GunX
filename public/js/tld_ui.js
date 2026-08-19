@@ -118,6 +118,10 @@
           hint.textContent = "ABsUP-owned — only the root key can mint; everyone else can receive gifted names";
           hint.className = "text-[11px] text-teal-400";
           $("tldClaimBtn").className = "bg-gradient-to-r from-teal-500 to-cyan-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90";
+        } else if (tld === "onion") {
+          hint.textContent = "unlimited — no count limit, mint as many as you want (PoW only)";
+          hint.className = "text-[11px] text-purple-400";
+          $("tldClaimBtn").className = "bg-gradient-to-r from-purple-500 to-fuchsia-600 text-slate-950 font-semibold px-4 py-2 rounded-lg text-sm hover:opacity-90";
         } else {
           hint.textContent = "";
           hint.className = "text-[11px] text-slate-500";

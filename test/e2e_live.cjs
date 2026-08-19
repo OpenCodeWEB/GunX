@@ -130,8 +130,59 @@ function check(label, cond, extra) {
   json = await res.json();
   check("stats total >= 1 + byTld", res.status === 200 && json.stats && json.stats.total >= 1 && json.stats.byTld && typeof json.stats.byTld.gunx === "number", json.stats);
 
+  // 12. .ONION mint — public, PoW-gated, unlimited (non-root key succeeds)
+  const onionName = "onione2e" + Math.random().toString(36).slice(2, 6);
+  const onionTs = Date.now();
+  const onionTarget = "gateway";
+  const onionDiff = getDifficulty(onionName);
+  const onionMine = await powMine(onionName, ownerPub, onionTarget, onionTs, onionDiff);
+  const onionClaim = { tld: "onion", name: onionName, ownerPub, target: onionTarget, ts: onionTs, nonce: onionMine.nonce, diff: onionDiff, hash: onionMine.hash };
+  onionClaim.sig = await SEA.sign(onionClaim, { pub: pair.pub, priv: pair.priv });
+  res = await fetch(API + "/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(onionClaim),
+  });
+  json = await res.json();
+  check("onion mint accepted (201, non-root)", res.status === 201 && json.ok && json.record.tld === "onion" && json.record.status === "active", json.ok ? json.record : json.error);
+
+  // 13. .ONION resolve + list shows it
+  res = await fetch(API + "/resolve?name=" + encodeURIComponent(onionName) + "&tld=onion");
+  json = await res.json();
+  check("onion resolve returns record", res.status === 200 && json.record && json.record.tld === "onion", json.record && { target: json.record.target, tld: json.record.tld });
+  res = await fetch(API + "/list?owner=" + encodeURIComponent(ownerPub));
+  json = await res.json();
+  check("onion appears in owner list", res.status === 200 && json.domains && json.domains.some(d => d.name === onionName && d.tld === "onion"), json.domains && json.domains.map(d => d.name + "." + d.tld));
+
+  // 14. .ONION gift transfer works (owner-signed)
+  const onionGift = { name: onionName, tld: "onion", newOwnerPub: newOwner.pub };
+  onionGift.sig = await SEA.sign(onionGift, { pub: pair.pub, priv: pair.priv });
+  res = await fetch(API + "/transfer", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name: onionName, tld: "onion", ownerPub, newOwnerPub: newOwner.pub, sig: onionGift.sig }),
+  });
+  json = await res.json();
+  check("onion gift accepted", res.status === 200 && json.ok && json.record.ownerPub === newOwner.pub, json.ok ? json.record.ownerPub.slice(0, 10) : json.error);
+
+  // 15. .ONION without PoW must be rejected (public TLD → PoW required)
+  const noPowClaim = { tld: "onion", name: "nopow" + Math.random().toString(36).slice(2, 6), ownerPub, target: "x", ts: Date.now(), nonce: 0, diff: 0, hash: "" };
+  noPowClaim.sig = await SEA.sign(noPowClaim, { pub: pair.pub, priv: pair.priv });
+  res = await fetch(API + "/claim", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(noPowClaim),
+  });
+  json = await res.json();
+  check("onion mint without PoW rejected (400)", res.status === 400, json);
+
+  // 16. STATS byTld includes onion
+  res = await fetch(API + "/stats");
+  json = await res.json();
+  check("stats byTld.onion is a number", res.status === 200 && json.stats.byTld && typeof json.stats.byTld.onion === "number", json.stats && json.stats.byTld);
+
   const failed = results.filter(r => !r.ok);
   console.log("\n" + (failed.length === 0 ? "ALL LIVE E2E PASS (" + results.length + ")" : failed.length + " FAILED") + " — owner=" + ownerPub);
-  console.log("claimed:", name + ".gunx ->", target, "| gifted to", newOwner.pub.slice(0, 10) + "...");
+  console.log("claimed:", name + ".gunx ->", target, "| onion:", onionName + ".onion ->", onionTarget, "| gifted to", newOwner.pub.slice(0, 10) + "...");
   process.exit(failed.length === 0 ? 0 : 1);
 })().catch(e => { console.error("E2E error:", e); process.exit(1); });
